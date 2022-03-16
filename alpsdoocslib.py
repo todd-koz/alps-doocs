@@ -290,8 +290,9 @@ def process_doocs_data_continuous(DOOCS_addresses,
 ################################################################################
 
 class MatWriter():
-    def __init__(self, file, header=' '*124):
+    def __init__(self, file, header='Matlab File'):
         self.file = file
+        header = header.strip()
         if len(header) > 124:
             print(f"Header text is too long. Truncated to \"{header[:124]}\"")
             header = header[:124]
@@ -373,7 +374,7 @@ def save_mat_subroutine(data, daqname, macropulse, timestamp, event_count, chann
             printProgressBar(event_count, total_events, prefix='Progress:', suffix="Complete")
 
 ### Main program
-def save_to_mat_custom(channels, filenames, comments,
+def save_to_mat_custom(channels, filenames, comments=' '*124,
                 start, stop, daq="/daq_data/alps", server="TTF2.DAQ/DAQ.SERVER5/DAQ.DATA.SVR/"):
 
     ### appending '.mat' extension if not already there
