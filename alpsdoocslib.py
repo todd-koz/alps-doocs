@@ -54,39 +54,6 @@ def decimate_data(data,decimation):
     return out
 
 
-###################### overwriteCheck #########################################
-### checks if the file name already exists, and if it does, prompts the user 
-### with a pop up asking for explicit overwrite permission. Returns boolean of
-### whether to proceed with the save or not.
-###############################################################################
-def overwriteCheck(filename):
-    overwrite = True
-    if os.path.exists(filename):
-        overwrite = askyesno("Overwrite","A file with this name already exists. Do you want to overwrite?")
-        if overwrite == True:
-            print('Overwriting file!!')
-    return overwrite
-
-
-###################### dateisPast #############################################
-### checks if the projected end of the data pull is in the past. 
-###############################################################################
-def dateisPast(date):
-    return datetime.now()>myConfig.stop_datetime
-
-
-###################### oversizeCheck ##########################################
-### checks if the file expected size is in excess of 1.0GB. If so, it prompts 
-### with a pop up asking for explicit permission to continue. Returns boolean of
-### whether to proceed with the save or not.
-############################################################################### 
-def oversizeCheck(filesize):
-    writeoversize = True
-    if filesize > 1e10:
-        writeoversize = askyesno("Oversize","The expected filesize is "+str(round(filesize/1e3,-1))+" GB. Are you sure you want to proceed?")
-    return writeoversize
-
-
 ############################# get_doocs_data ##################################
 ### This function, adapted from a script written by Sven Karstensen, communicates
 ### with the DOOCS DAQ server via the function "pydaq.connect" and pulls the data
@@ -437,3 +404,35 @@ def save_to_mat_custom(channels, filenames, comments,
         ### IMPORTANT: always call the .update_tags() method at the end of writing files
         for i in range(len(mat_writers)):
             mat_writers[i].update_tags()
+
+###################### overwriteCheck #########################################
+### checks if the file name already exists, and if it does, prompts the user 
+### with a pop up asking for explicit overwrite permission. Returns boolean of
+### whether to proceed with the save or not.
+###############################################################################
+def overwriteCheck(filename):
+    overwrite = True
+    if os.path.exists(filename):
+        overwrite = askyesno("Overwrite","A file with this name already exists. Do you want to overwrite?")
+        if overwrite == True:
+            print('Overwriting file!!')
+    return overwrite
+
+
+###################### dateisPast #############################################
+### checks if the projected end of the data pull is in the past. 
+###############################################################################
+def dateisPast(date):
+    return datetime.now()>myConfig.stop_datetime
+
+
+###################### oversizeCheck ##########################################
+### checks if the file expected size is in excess of 1.0GB. If so, it prompts 
+### with a pop up asking for explicit permission to continue. Returns boolean of
+### whether to proceed with the save or not.
+############################################################################### 
+def oversizeCheck(filesize):
+    writeoversize = True
+    if filesize > 1e10:
+        writeoversize = askyesno("Oversize","The expected filesize is "+str(round(filesize/1e3,-1))+" GB. Are you sure you want to proceed?")
+    return writeoversize
