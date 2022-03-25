@@ -16,7 +16,6 @@ from datetime import datetime
 from datetime import timedelta
 import os
 import os.path
-from pathlib import Path
 
 import alpsdoocslib
 
@@ -47,7 +46,10 @@ class ChannelSelectWindow():
         'HN/CH_1.00' ]
 
     def __init__(self, parent):
-        self.root = Toplevel(parent)
+        if parent.parent == None:
+            self.root = Toplevel(parent.root)
+        else:
+            self.root = Toplevel(parent)
         self.root.title('Select channels')
         self.parent = parent
 
@@ -88,7 +90,7 @@ class ChannelSelectWindow():
             s = s + f"({self.parent.channels[i]}, {self.parent.filenames[i]}) "
         self.parent.channelSelectResult.insert(0, s)
 
-class SaveApp(Tk):
+class SaveApp():
     filetype_options = ['.mat', '.csv' ]
 
     decimationVal = {
@@ -102,9 +104,15 @@ class SaveApp(Tk):
         "64Hz": 64,
         "32Hz": 32 }
 
-    def __init__(self):
-        Tk.__init__(self)
-        self.title("ALPS DOOCS Save Data")
+    def __init__(self, parent=None):
+
+        if parent==None:
+            self.root = Tk()
+        else:
+            self.root = Toplevel(parent)
+
+        self.parent = parent
+        self.root.title("ALPS DOOCS Save Data")
 
         self.defineWidgets()
         self.placeWidgets()
@@ -115,42 +123,42 @@ class SaveApp(Tk):
         self.interrupt = False
 
     def defineWidgets(self):
-        self.channelSelectLabel = Label(self, text="Select channels: ")
-        self.filetypeLabel = Label(self, text="Filetype: ")
-        self.directoryLabel = Label(self, text="Save Directory: ")
-        self.startdateLabel = Label(self, text="Start date: ")
-        self.starttimeLabel = Label(self, text="Start time: ")
-        self.durationLabel = Label(self, text="Duration: ")
-        self.daysLabel = Label(self, text="Days:")
-        self.hoursLabel = Label(self, text="Hours:")
-        self.minutesLabel = Label(self, text="Minutes:")
-        self.secondsLabel = Label(self, text="Seconds:")
-        self.usercommentsLabel = Label(self, text="Enter additional user comments about this measurement/data. \nThese additional comments will be saved as a .txt file in the destination directory.")
+        self.channelSelectLabel = Label(self.root, text="Select channels: ")
+        self.filetypeLabel = Label(self.root, text="Filetype: ")
+        self.directoryLabel = Label(self.root, text="Save Directory: ")
+        self.startdateLabel = Label(self.root, text="Start date: ")
+        self.starttimeLabel = Label(self.root, text="Start time: ")
+        self.durationLabel = Label(self.root, text="Duration: ")
+        self.daysLabel = Label(self.root, text="Days:")
+        self.hoursLabel = Label(self.root, text="Hours:")
+        self.minutesLabel = Label(self.root, text="Minutes:")
+        self.secondsLabel = Label(self.root, text="Seconds:")
+        self.usercommentsLabel = Label(self.root, text="Enter additional user comments about this measurement/data. \nThese additional comments will be saved as a .txt file in the destination directory.")
 
-        self.channelSelectButton = Button(self, text="Select Channels", command=self.openChannelSelect)
-        self.channelSelectResult = Entry(self, width=50, justify='left')
+        self.channelSelectButton = Button(self.root, text="Select Channels", command=self.openChannelSelect)
+        self.channelSelectResult = Entry(self.root, width=50, justify='left')
 
         self.filetype = StringVar()
         self.filetype.set('.mat')
-        self.filetype_drop = OptionMenu(self, self.filetype, self.filetype_options[0], *self.filetype_options)
+        self.filetype_drop = OptionMenu(self.root, self.filetype, self.filetype_options[0], *self.filetype_options)
 
-        self.directory = Entry(self, width=50, justify='left')
+        self.directory = Entry(self.root, width=50, justify='left')
         self.directory.insert(0, os.getcwd())
         self.directory.xview_moveto(1)
 
-        self.startdateEntry = Entry(self, width=50)
+        self.startdateEntry = Entry(self.root, width=50)
         self.startdateEntry.insert(0, datetime.today().strftime('%Y-%m-%d'))
 
-        self.starttimeEntry = Entry(self, width=50)
+        self.starttimeEntry = Entry(self.root, width=50)
         self.starttimeEntry.insert(0, datetime.today().strftime('%H:%M:%S'))
 
-        self.duration_d = Entry(self, width=10)
+        self.duration_d = Entry(self.root, width=10)
         self.duration_d.insert(0,0)
-        self.duration_h = Entry(self, width=10)
+        self.duration_h = Entry(self.root, width=10)
         self.duration_h.insert(0,0)
-        self.duration_m = Entry(self, width=10)
+        self.duration_m = Entry(self.root, width=10)
         self.duration_m.insert(0,0)
-        self.duration_s = Entry(self, width=10)
+        self.duration_s = Entry(self.root, width=10)
         self.duration_s.insert(0,10)
 
         self.timedelta = timedelta(
@@ -163,21 +171,21 @@ class SaveApp(Tk):
             self.startdateEntry.get()+self.starttimeEntry.get(),
             "%Y-%m-%d%H:%M:%S" )
 
-        self.startDateLabel = Label(self, text=self.starttime)
-        self.timeDeltaLabel = Label(self, text=self.timedelta)
-        self.endDateLabel = Label(self, text=self.starttime+self.timedelta)
+        self.startDateLabel = Label(self.root, text=self.starttime)
+        self.timeDeltaLabel = Label(self.root, text=self.timedelta)
+        self.endDateLabel = Label(self.root, text=self.starttime+self.timedelta)
 
-        self.decimationLabel = Label(self, text="Down-sample to:")
+        self.decimationLabel = Label(self.root, text="Down-sample to:")
         self.decimation = StringVar()
-        self.decimation_drop = OptionMenu(self, self.decimation, list(self.decimationVal.keys())[0], *list(self.decimationVal.keys()))
+        self.decimation_drop = OptionMenu(self.root, self.decimation, list(self.decimationVal.keys())[0], *list(self.decimationVal.keys()))
 
-        self.saveFileButton = Button(self, text="Start Save", command=self.saveButtonClick )
+        self.saveFileButton = Button(self.root, text="Start Save", command=self.saveButtonClick )
 
-        self.interruptButton = Button(self, text="Interrupt Save", command=self.interruptButtonClick, state=DISABLED)
+        self.interruptButton = Button(self.root, text="Interrupt Save", command=self.interruptButtonClick, state=DISABLED)
 
-        self.usercommentFrame = Frame(self)
+        self.usercommentFrame = Frame(self.root)
         self.usercommentBox = Text(self.usercommentFrame,wrap=WORD,height=5)
-        self.consoleFrame = Frame(self)
+        self.consoleFrame = Frame(self.root)
         self.consoleBox = scrolledtext.ScrolledText(self.consoleFrame,wrap=WORD)
 
     def placeWidgets(self):
@@ -329,9 +337,8 @@ class SaveApp(Tk):
         return writeoversize
 
     def run(self):
-        self.mainloop()
+        self.root.mainloop()
 
 if __name__ == "__main__":
     myapp = SaveApp()
     myapp.run()
-    
