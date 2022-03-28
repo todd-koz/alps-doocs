@@ -16,6 +16,7 @@ from datetime import datetime
 from datetime import timedelta
 import os
 import os.path
+from pathlib import Path
 
 import alpsdoocslib
 
@@ -46,49 +47,55 @@ class ChannelSelectWindow():
         'HN/CH_1.00' ]
 
     def __init__(self, parent):
-        if parent.parent == None:
-            self.root = Toplevel(parent.root)
-        else:
-            self.root = Toplevel(parent)
-        self.root.title('Select channels')
+        self.window = Toplevel(parent.window)
+        self.window.title('Select channels')
         self.parent = parent
 
-        self.channelsLabel = Label(self.root, text="Channels:")
-        self.namesLabel = Label(self.root, text="File names:")
-        self.selectButton = Button(self.root, text="Update Selection", command=self.SaveAndClose)
+        self.channelsLabel = Label(self.window, text="Channels:")
+        self.namesLabel = Label(self.window, text="File names / labels:")
+        self.selectButton = Button(self.window, text="Update Selection", command=self.updateSelection)
 
         self.vars = []
         self.checks = []
         self.names = []
 
-        for i in range(len(self.channel_options)):
+        chan_len = len(self.channel_options)
+        for i in range(chan_len):
             self.vars.append(IntVar())
-            self.checks.append( Checkbutton(self.root, text=self.channel_options[0], variable=self.vars[i]) )
-            self.names.append( Entry(self.root, width=50) )
+            self.checks.append( Checkbutton(self.window, text=self.channel_options[i], variable=self.vars[i]) )
+            self.names.append( Entry(self.window, width=50) )
+
+        self.selectionResultLabel = Label(self.window, text="Selection:")
+        self.selectionResult = Entry(self.window, width=50)
 
         self.channelsLabel.grid(row=0, column=0)
         self.namesLabel.grid(row=0, column=1)
 
-        for i in range(len(self.channel_options)):
-            self.checks[i].grid(row=i+1, column=0)
-            self.names[i].grid(row=i+1, column=1)
+        for i in range(chan_len):
+            self.checks[i].grid(row=i+1, column=0, padx=5, pady=2)
+            self.names[i].grid(row=i+1, column=1, padx=5, pady=2)
 
-        self.selectButton.grid(row=len(self.channel_options)+1, column=1, columnspan=2)
+        self.selectButton.grid(row=chan_len+1, column=0, columnspan=2, pady=5)
 
-    def SaveAndClose(self):
+        self.selectionResultLabel.grid(row=chan_len+2, column=0, pady=5)
+        self.selectionResult.grid(row=chan_len+2, column=1, sticky=W, pady=5, padx=5)
+
+    def updateSelection(self):
         self.parent.channels.clear()
         self.parent.filenames.clear()
         for i in range(len(self.channel_options)):
             if self.vars[i].get():
                 self.parent.channels.append(self.channel_options[i])
                 self.parent.filenames.append(self.names[i].get())
-        self.updateView()
 
-    def updateView(self):
-        s = ''
+        selectionText = ''
         for i in range(len(self.parent.channels)):
-            s = s + f"({self.parent.channels[i]}, {self.parent.filenames[i]}) "
-        self.parent.channelSelectResult.insert(0, s)
+            selectionText = selectionText + f"({self.parent.channels[i]}, {self.parent.filenames[i]}) "
+
+        self.parent.channelSelectResult.delete(0, END)
+        self.parent.channelSelectResult.insert(0, selectionText)
+        self.selectionResult.delete(0, END)
+        self.selectionResult.insert(0, selectionText)
 
 class SaveApp():
     filetype_options = ['.mat', '.csv' ]
@@ -107,12 +114,12 @@ class SaveApp():
     def __init__(self, parent=None):
 
         if parent==None:
-            self.root = Tk()
+            self.window = Tk()
         else:
-            self.root = Toplevel(parent)
+            self.window = Toplevel(parent)
 
         self.parent = parent
-        self.root.title("ALPS DOOCS Save Data")
+        self.window.title("ALPS DOOCS Save Data")
 
         self.defineWidgets()
         self.placeWidgets()
@@ -123,42 +130,42 @@ class SaveApp():
         self.interrupt = False
 
     def defineWidgets(self):
-        self.channelSelectLabel = Label(self.root, text="Select channels: ")
-        self.filetypeLabel = Label(self.root, text="Filetype: ")
-        self.directoryLabel = Label(self.root, text="Save Directory: ")
-        self.startdateLabel = Label(self.root, text="Start date: ")
-        self.starttimeLabel = Label(self.root, text="Start time: ")
-        self.durationLabel = Label(self.root, text="Duration: ")
-        self.daysLabel = Label(self.root, text="Days:")
-        self.hoursLabel = Label(self.root, text="Hours:")
-        self.minutesLabel = Label(self.root, text="Minutes:")
-        self.secondsLabel = Label(self.root, text="Seconds:")
-        self.usercommentsLabel = Label(self.root, text="Enter additional user comments about this measurement/data. \nThese additional comments will be saved as a .txt file in the destination directory.")
+        self.channelSelectLabel = Label(self.window, text="Select channels: ")
+        self.filetypeLabel = Label(self.window, text="Filetype: ")
+        self.directoryLabel = Label(self.window, text="Save Directory: ")
+        self.startdateLabel = Label(self.window, text="Start date: ")
+        self.starttimeLabel = Label(self.window, text="Start time: ")
+        self.durationLabel = Label(self.window, text="Duration: ")
+        self.daysLabel = Label(self.window, text="Days:")
+        self.hoursLabel = Label(self.window, text="Hours:")
+        self.minutesLabel = Label(self.window, text="Minutes:")
+        self.secondsLabel = Label(self.window, text="Seconds:")
+        self.usercommentsLabel = Label(self.window, text="Enter additional user comments about this measurement/data. \nThese additional comments will be saved as a .txt file in the destination directory.")
 
-        self.channelSelectButton = Button(self.root, text="Select Channels", command=self.openChannelSelect)
-        self.channelSelectResult = Entry(self.root, width=50, justify='left')
+        self.channelSelectButton = Button(self.window, text="Select Channels", command=self.openChannelSelect)
+        self.channelSelectResult = Entry(self.window, width=50, justify='left')
 
         self.filetype = StringVar()
         self.filetype.set('.mat')
-        self.filetype_drop = OptionMenu(self.root, self.filetype, self.filetype_options[0], *self.filetype_options)
+        self.filetype_drop = OptionMenu(self.window, self.filetype, self.filetype_options[0], *self.filetype_options)
 
-        self.directory = Entry(self.root, width=50, justify='left')
+        self.directory = Entry(self.window, width=50, justify='left')
         self.directory.insert(0, os.getcwd())
         self.directory.xview_moveto(1)
 
-        self.startdateEntry = Entry(self.root, width=50)
+        self.startdateEntry = Entry(self.window, width=50)
         self.startdateEntry.insert(0, datetime.today().strftime('%Y-%m-%d'))
 
-        self.starttimeEntry = Entry(self.root, width=50)
+        self.starttimeEntry = Entry(self.window, width=50)
         self.starttimeEntry.insert(0, datetime.today().strftime('%H:%M:%S'))
 
-        self.duration_d = Entry(self.root, width=10)
+        self.duration_d = Entry(self.window, width=10)
         self.duration_d.insert(0,0)
-        self.duration_h = Entry(self.root, width=10)
+        self.duration_h = Entry(self.window, width=10)
         self.duration_h.insert(0,0)
-        self.duration_m = Entry(self.root, width=10)
+        self.duration_m = Entry(self.window, width=10)
         self.duration_m.insert(0,0)
-        self.duration_s = Entry(self.root, width=10)
+        self.duration_s = Entry(self.window, width=10)
         self.duration_s.insert(0,10)
 
         self.timedelta = timedelta(
@@ -171,21 +178,21 @@ class SaveApp():
             self.startdateEntry.get()+self.starttimeEntry.get(),
             "%Y-%m-%d%H:%M:%S" )
 
-        self.startDateLabel = Label(self.root, text=self.starttime)
-        self.timeDeltaLabel = Label(self.root, text=self.timedelta)
-        self.endDateLabel = Label(self.root, text=self.starttime+self.timedelta)
+        self.startDateLabel = Label(self.window, text=self.starttime)
+        self.timeDeltaLabel = Label(self.window, text=self.timedelta)
+        self.endDateLabel = Label(self.window, text=self.starttime+self.timedelta)
 
-        self.decimationLabel = Label(self.root, text="Down-sample to:")
+        self.decimationLabel = Label(self.window, text="Down-sample to:")
         self.decimation = StringVar()
-        self.decimation_drop = OptionMenu(self.root, self.decimation, list(self.decimationVal.keys())[0], *list(self.decimationVal.keys()))
+        self.decimation_drop = OptionMenu(self.window, self.decimation, list(self.decimationVal.keys())[0], *list(self.decimationVal.keys()))
 
-        self.saveFileButton = Button(self.root, text="Start Save", command=self.saveButtonClick )
+        self.saveFileButton = Button(self.window, text="Start Save", command=self.saveButtonClick )
 
-        self.interruptButton = Button(self.root, text="Interrupt Save", command=self.interruptButtonClick, state=DISABLED)
+        self.interruptButton = Button(self.window, text="Interrupt Save", command=self.interruptButtonClick, state=DISABLED)
 
-        self.usercommentFrame = Frame(self.root)
+        self.usercommentFrame = Frame(self.window)
         self.usercommentBox = Text(self.usercommentFrame,wrap=WORD,height=5)
-        self.consoleFrame = Frame(self.root)
+        self.consoleFrame = Frame(self.window)
         self.consoleBox = scrolledtext.ScrolledText(self.consoleFrame,wrap=WORD)
 
     def placeWidgets(self):
@@ -274,20 +281,24 @@ class SaveApp():
             self.printToConsoleBox(summary)
             self.interruptButton.config(state=NORMAL)
             self.interrupt = False
-            self.startSave(self.channels, filenames, start, stop, decimationFactor)
+            self.saveMain(self.channels, filenames, start, stop, decimationFactor)
         else:
-            self.printToConsoleBox('Save canceled.')
+            self.printToConsoleBox('Save canceled.', 'warning')
 
-    def startSave(self, channels, filenames, start, stop, decimationFactor):
-        alpsdoocslib.save_to_mat_custom(channels, filenames, start=start, stop=stop)
+    def saveMain(self, channels, filenames, start, stop, decimationFactor):
+        if self.filetype.get() == '.mat':
+            alpsdoocslib.save_to_mat_custom(channels, filenames, start=start, stop=stop)
+        else:
+            self.printToConsoleBox('File type not implemented yet.', 'warning')
 
     def interruptButtonClick(self):
         self.interrupt = True
         self.interruptButton.config(state=DISABLED)
+        self.printToConsoleBox('Save interrupted.', 'warning')
 
     def openChannelSelect(self):
         selectionWindow = ChannelSelectWindow(self)
-        selectionWindow.root.mainloop()
+        selectionWindow.window.mainloop()
 
     def printToConsoleBox(self, message, type='normal'):
         self.consoleBox.config(state=NORMAL)
@@ -337,7 +348,7 @@ class SaveApp():
         return writeoversize
 
     def run(self):
-        self.root.mainloop()
+        self.window.mainloop()
 
 if __name__ == "__main__":
     myapp = SaveApp()
