@@ -72,13 +72,13 @@ def unsigned_to_signed(number, maxbits):
     else:
         return number - maxn
 
-def get_doocs_data(chans,start,stop,daq="/daq_data/alps",server="TTF2.DAQ/DAQ.SERVER5/DAQ.DATA.SVR/"):
+def get_doocs_data(chans,start,stop,daq="/daq_data/alps",server="ALPS.DAQ/DAQ.SERVER1/DAQ.DATA.SVR/"):
 #    chans=['ALPS.DIAG/ALPS.ADC.HN/CH_1.00','ALPS.DIAG/ALPS.ADC.HN/CH_1.01']
 #    start_time="2022-01-03T12:23:00"
 #    stop_time= "2022-01-03T12:23:01"  
     try:
        # for NAF environment on NAF cluster
-        err = pydaq.connect(start=start, stop=stop, ddir=daq_taking_data, exp='alps', chans=chans, daqservers=daqservers)
+        err = pydaq.connect(start=start, stop=stop, ddir=daq_taking_data, exp='alps', chans=chans, daqservers=server)
             
     except pydaq.PyDaqException as err:
         print('Something wrong with daqconnect... exiting')
@@ -375,7 +375,7 @@ def save_mat_subroutine(data, daqname, macropulse, timestamp, event_count, chann
 
 ### Main program
 def save_to_mat_custom(channels, filenames, comments=' '*124,
-                start, stop, daq="/daq_data/alps", server="TTF2.DAQ/DAQ.SERVER5/DAQ.DATA.SVR/"):
+                start, stop, daq="/daq_data/alps", server="ALPS.DAQ/DAQ.SERVER1/DAQ.DATA.SVR/"):
 
     ### appending '.mat' extension if not already there
     filenames = [filenames[i]+'.mat'*(not filenames[i][-4:]=='.mat') for i in range(len(filenames))]
@@ -405,35 +405,3 @@ def save_to_mat_custom(channels, filenames, comments=' '*124,
         ### IMPORTANT: always call the .update_tags() method at the end of writing files
         for i in range(len(mat_writers)):
             mat_writers[i].update_tags()
-
-###################### overwriteCheck #########################################
-### checks if the file name already exists, and if it does, prompts the user 
-### with a pop up asking for explicit overwrite permission. Returns boolean of
-### whether to proceed with the save or not.
-###############################################################################
-def overwriteCheck(filename):
-    overwrite = True
-    if os.path.exists(filename):
-        overwrite = askyesno("Overwrite","A file with this name already exists. Do you want to overwrite?")
-        if overwrite == True:
-            print('Overwriting file!!')
-    return overwrite
-
-
-###################### dateisPast #############################################
-### checks if the projected end of the data pull is in the past. 
-###############################################################################
-def dateisPast(date):
-    return datetime.now()>myConfig.stop_datetime
-
-
-###################### oversizeCheck ##########################################
-### checks if the file expected size is in excess of 1.0GB. If so, it prompts 
-### with a pop up asking for explicit permission to continue. Returns boolean of
-### whether to proceed with the save or not.
-############################################################################### 
-def oversizeCheck(filesize):
-    writeoversize = True
-    if filesize > 1e10:
-        writeoversize = askyesno("Oversize","The expected filesize is "+str(round(filesize/1e3,-1))+" GB. Are you sure you want to proceed?")
-    return writeoversize
