@@ -197,9 +197,10 @@ def signal_process(data,fs=16000,t0=0,process="None",filtertype="None",filterfre
 ### This is achieved by accepting another function as one of its arguments called
 ### "subroutine". If the subroutine requires its own arguments, they can be passed
 ### as a tuple to an argument of this function called "sub_args". When defining
-### a subroutine, at least 5 arguments are required: data, daqname, macropulse,
-### timestamp, and event_count. These 5 will be automatically passed to the sub-
-### routine before those contained in "sub_args" are passed.
+### a subroutine, it must expect at least 2 arguments: (1) a list of dictionaries
+### 'data_dict' with keys 'data', 'daqname', 'macropulse', 'timestamp'; and (2) an
+### integer 'event_count'. These two arguments will be automatically passed to the
+### subroutine before those contained in "sub_args" are passed, if any.
 ##################################################################################
 
 def process_doocs_data_continuous(DOOCS_addresses,
@@ -208,16 +209,14 @@ def process_doocs_data_continuous(DOOCS_addresses,
                                    stop="2022-03-01T00:01:01",
                                    daq="/daq_data/alps",
                                    server="TTF2.DAQ/DAQ.SERVER5/DAQ.DATA.SVR/",
-                                   sub_args=(None,)):
+                                   sub_args=None):
 
     try:
        # for NAF environment on NAF cluster
         err = pydaq.connect(start=start, stop=stop, ddir=daq, exp='alps', chans=DOOCS_addresses, daqservers=server)
 
-    except pydaq.PyDaqException as err:
-        print('Something wrong with daqconnect... exiting')
-        print(err)
-        sys.exit(-1)
+    except pydaq.PyDaqException as e:
+        return e
 
     if err == []:
 
@@ -235,6 +234,8 @@ def process_doocs_data_continuous(DOOCS_addresses,
                 if channels == None:
                     break
                 total += 1
+                
+                data_to_subroutine = []
 
                 for chan in channels:
                     daqname = chan[0]['miscellaneous']['daqname']
@@ -258,20 +259,24 @@ def process_doocs_data_continuous(DOOCS_addresses,
                     for x in data_array[0]:
                         data_array_int[i] = unsigned_to_signed(x, 16)
                         i += 1
+                        
+                    data_to_subroutine.append( {'data':data_array_int, 'daqname':daqname, 'macropulse':macropulse, 'timestamp':timestamp} )
 
-                    if sub_args==(None,):
-                        subroutine(data_array_int, daqname, macropulse, timestamp, total)
-                    else:
-                        subroutine(data_array_int, daqname, macropulse, timestamp, total, *sub_args)
+                if sub_args == None:
+                    subroutine(data_to_subroutine, total)
+                else:
+                    subroutine(data_to_subroutine, total, *sub_args)
 
             except Exception as err:
                 print('Something wrong ... stopping %s'%str(err))
                 stop = True
 
-        print('\nSummary:\nTotal events: %d emptycount %d'% (total, emptycount))
+        summary = f"Total events: {total}, emptycount: {emptycount}"
         for stats in stats_list:
-            print(stats['daqname'], ':\t', stats['events'], 'events')
+            summary += '\n' + stats['daqname'] + ':\t' + stats['events'] + 'events'
+
         pydaq.disconnect()
+        return summary
 
 ################################### MatWriter ###################################
 ### This is a custom file writing handler for .mat files, to be an alternative to
@@ -365,13 +370,12 @@ def printProgressBar(iteration, total, prefix = '', suffix = '', decimals = 1, l
         print()
 
 ### define the subroutine
-def save_mat_subroutine(data, daqname, macropulse, timestamp, event_count, channels, writers, total_events):
-    if daqname in channels:
-        which = channels.index(daqname)
-        writers[which].write_data( data )
-
-        if (which == 0) and (event_count % 100 == 0):
-            printProgressBar(event_count, total_events, prefix='Progress:', suffix="Complete")
+def save_mat_subroutine(data_dict, event_count, channels, writers):
+    for i in range(len(data_dict)):
+        daqname = data_dict[i]['daqname']
+        if daqname in channels:
+            which = channels.index(daqname)
+            writers[which].write_data( data_dict[i]['data'] )
 
 ### Main program
 def save_to_mat_custom(channels, filenames, comments=' '*124,
@@ -381,10 +385,10 @@ def save_to_mat_custom(channels, filenames, comments=' '*124,
     filenames = [filenames[i]+'.mat'*(not filenames[i][-4:]=='.mat') for i in range(len(filenames))]
 
     # calculate total number of events for progress bar
-    starttime = datetime.strptime(start, "%Y-%m-%dT%H:%M:%S")
-    stoptime = datetime.strptime(stop, "%Y-%m-%dT%H:%M:%S")
-    duration = (stoptime - starttime).seconds
-    tot_events_calc = duration * 32
+    # starttime = datetime.strptime(start, "%Y-%m-%dT%H:%M:%S")
+    # stoptime = datetime.strptime(stop, "%Y-%m-%dT%H:%M:%S")
+    # duration = (stoptime - starttime).seconds
+    # tot_events_calc = duration * 32
 
     ### using ExitStack as the context manager because there are variable number of files to open
     from contextlib import ExitStack
@@ -400,7 +404,7 @@ def save_to_mat_custom(channels, filenames, comments=' '*124,
         process_doocs_data_continuous(channels, save_mat_subroutine,
                                       start=start, stop=stop,
                                       daq=daq, server=server,
-                                      sub_args=(channels,mat_writers, tot_events_calc))
+                                      sub_args=(channels, mat_writers))
 
         ### IMPORTANT: always call the .update_tags() method at the end of writing files
         for i in range(len(mat_writers)):
