@@ -421,21 +421,23 @@ def save_to_mat_custom(channels, filenames, comments=' '*124,
 # the same address, except suffixed by ".HIST". Also assumed is that the
 # sampling rates of these channels are slow.
 
-# Calling pydoocs.read() on a ".HIST" address returns a list of tuples
-# of the form (timestamp,data). Repeated calls will return lists of the
-# the same length, but some of the timestamps may be the same depending
-# on the duration between each call. This implies a set "buffer size"
-# for each ".HIST" address (perhaps depending on the sampling rate and
-# data type) and that the buffer is continuously updated with new values
-# and trimmed of old values.
-
-# This means that past data is no longer available after some period of
-# time. Thus the following code is meant to record data only starting
-# at runtime. If saving multiple channels of data, the tasks must be run
+# Calling pydoocs.read() on a ".HIST" address returns a dict containing
+# an item labeled "data", which is list of tuples of the form (timestamp,
+# data, macropulse). Repeated calls will return lists of the same length,
+# but some timestamps may be the same depending on the duration between
+# each call. This implies a set "buffer size" for each channel and that
+# the buffer is continuously updated with new values and removed of old
+# values. This means that past data is no longer available after some
+# period of time. Thus the following code only records data starting at
+# run-time. If saving multiple channels of data, the tasks must be run
 # in parallel to reduce the risk of data from one channel being skipped
 # (i.e. pushed out of the buffer) while data from another channel is
 # being read and written to file. Hence, the tasks are handled by
 # ThreadPoolExecutor from Python's concurrent.futures module.
+
+# The difference in time between each timestamp also varies. Thus, both
+# the timestamps and data are recorded. Each row of the file is a time-
+# data pair, separated by a comma.
 ######################################################################
 
 def remove_overlap_timestamp(past_data, new_data):
@@ -454,7 +456,7 @@ def remove_overlap_timestamp(past_data, new_data):
 def record_doocs_channel(channel, filepath, duration):
     hist = np.array(pydoocs.read(channel+'.HIST')['data'])[:,:2]
     past = np.zeros(hist.shape)
-    t0 = past[0,0]
+    t0 = hist[0,0]
 
     with open(filepath, 'w', newline='') as file:
         writer = csv.writer(file)
@@ -474,6 +476,7 @@ def record_doocs_channel(channel, filepath, duration):
                 hist_timechecked = remove_overlap_timestamp(past, hist)
                 if any(hist_timechecked):
                     writer.writerows(hist_timechecked)
+    return t0, hist[-1,0]
 
 def record_doocs_channel_multiple(channels, filepaths, duration):
     nch = len(channels)
@@ -483,10 +486,13 @@ def record_doocs_channel_multiple(channels, filepaths, duration):
                                filepaths[i],
                                duration) for i in range(nch)]
     done = [False]*nch
+    result = [None]*nch
     while sum(done) == nch:
         for i in range(len(tasks)):
             try:
                 out = tasks[i].result(timeout=1)
                 done[i] = True
+                result[i] = out
             except TimeoutError:
                 continue
+    return result
