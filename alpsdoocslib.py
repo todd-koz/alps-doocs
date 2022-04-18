@@ -7,15 +7,18 @@ Function library for ALPS - DOOCS python software
 
 @author: todd, daniel
 """
+import pydoocs
+import pydaq
+
 import csv
-from scipy.io import savemat
-from scipy import signal
 import sys
 import time
 from struct import pack
 from datetime import datetime, timedelta
-import pydoocs
-import pydaq
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+
+from scipy.io import savemat
+from scipy import signal
 import numpy as np
 
 ########################### save_to_csv #######################################
@@ -409,3 +412,81 @@ def save_to_mat_custom(channels, filenames, comments=' '*124,
         ### IMPORTANT: always call the .update_tags() method at the end of writing files
         for i in range(len(mat_writers)):
             mat_writers[i].update_tags()
+
+######################################################################
+# The following code uses the pydoocs.read() function to save data from
+# DOOCS channels to CSV files. These DOOCS channels are ones not on a
+# DAQ server, that is, ones not obtained via the functions above. It is
+# assumed that the channels of interest have an associated channel with
+# the same address, except suffixed by ".HIST". Also assumed is that the
+# sampling rates of these channels are slow.
+
+# Calling pydoocs.read() on a ".HIST" address returns a list of tuples
+# of the form (timestamp,data). Repeated calls will return lists of the
+# the same length, but some of the timestamps may be the same depending
+# on the duration between each call. This implies a set "buffer size"
+# for each ".HIST" address (perhaps depending on the sampling rate and
+# data type) and that the buffer is continuously updated with new values
+# and trimmed of old values.
+
+# This means that past data is no longer available after some period of
+# time. Thus the following code is meant to record data only starting
+# at runtime. If saving multiple channels of data, the tasks must be run
+# in parallel to reduce the risk of data from one channel being skipped
+# (i.e. pushed out of the buffer) while data from another channel is
+# being read and written to file. Hence, the tasks are handled by
+# ThreadPoolExecutor from Python's concurrent.futures module.
+######################################################################
+
+def remove_overlap_timestamp(past_data, new_data):
+    latest_timestamp = past_data[-1,0]
+    new_timestamps = new_data[:,0]
+
+    new_start_pos = len(new_data)
+
+    for i in range(start=len(new_data)-1, stop=-1, step=-1):
+        if new_timestamps[i] <= latest_timestamp:
+            break
+        else:
+            new_start_pos -= 1
+    return new_data[new_start_pos:,:]
+
+def record_doocs_channel(channel, filepath, duration):
+    hist = np.array(pydoocs.read(channel+'.HIST')['data'])[:,:2]
+    past = np.zeros(hist.shape)
+    t0 = past[0,0]
+
+    with open(filepath, 'w', newline='') as file:
+        writer = csv.writer(file)
+        while True:
+            dt = hist[-1,0] - t0
+            if dt <= duration:
+                hist_timechecked = remove_overlap_timestamp(past, hist)
+                if any(hist_timechecked):
+                    writer.writerows(hist_timechecked)
+                past = hist
+                hist = np.array(pydoocs.read(channel+'.HIST')['data'])[:,:2]
+            else:
+                stop = len(hist)-1
+                while hist[stop,0] - t0 > duration:
+                    stop -= 1
+                hist = hist[:stop+1,:]
+                hist_timechecked = remove_overlap_timestamp(past, hist)
+                if any(hist_timechecked):
+                    writer.writerows(hist_timechecked)
+
+def record_doocs_channel_multiple(channels, filepaths, duration):
+    nch = len(channels)
+    executor = ThreadPoolExecutor(max_workers=nch)
+    tasks = [executor.submit(record_doocs_channel,
+                               channels[i],
+                               filepaths[i],
+                               duration) for i in range(nch)]
+    done = [False]*nch
+    while sum(done) == nch:
+        for i in range(len(tasks)):
+            try:
+                out = tasks[i].result(timeout=1)
+                done[i] = True
+            except TimeoutError:
+                continue
