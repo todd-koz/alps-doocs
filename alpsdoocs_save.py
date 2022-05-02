@@ -1,10 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Sun May 01 11:08:22 2022
-
-@author: Daniel
-"""
 from PyQt5.QtWidgets import (QPushButton, QWidget, QLabel, QLineEdit,
     QTextEdit, QCheckBox, QComboBox, QSizePolicy,
     QGridLayout, QApplication, QHBoxLayout, QVBoxLayout,
@@ -17,8 +10,10 @@ import os.path
 import time
 from datetime import datetime
 from datetime import timedelta
+from threading import Thread
+from contextlib import ExitStack
 
-import alpsdoocslib
+from alpsdoocslib import MatWriter, get_doocs_data_continuous, save_mat_subroutine
 
 class ConfigError(Exception):
     pass
@@ -125,6 +120,7 @@ class ChannelSelect(QWidget):
 
 class SaveApp(QWidget):
     filetypeOptions = ['.mat', '.csv' ]
+    baseAdr = 'ALPS.DIAG/ALPS.ADC.'
 
     decimationVal = {
         "16 kHz": 16000,
@@ -288,6 +284,11 @@ class SaveApp(QWidget):
             self.textEditConsoleBox.insertPlainText(str(t)+' ')
         self.textEditConsoleBox.insertPlainText('\n')
 
+    def print_error(self, text):
+        self.textEditConsoleBox.setTextColor(QtGui.QColor('red'))
+        self.textEditConsoleBox.insertPlainText(text+'\n')
+        self.textEditConsoleBox.setTextColor(QtGui.QColor('black'))
+
     def openChannelSelect(self):
         self.selectdialog = ChannelSelect(self)
         self.selectdialog.show()
@@ -312,17 +313,15 @@ class SaveApp(QWidget):
 
         stop_dt = (start_dt + duration_dt)
 
-        return start, duration, stop_dt
+        return start, stop, duration, stop_dt
 
     def dateisPast(self, stoptime):
         return datetime.now() < stoptime
 
-    def badChannelSelection(self, channels, comments):
+    def badChannelSelection(self, channels, names):
         result = not any(channels)
-
-        for com in comments:
-            result = result or (com=='')
-
+        for name in names:
+            result = result or (name=='')
         return result
 
     def overwriteCheck(self, filenames):
@@ -354,13 +353,7 @@ class SaveApp(QWidget):
     def startSave(self):
         self.interrupt = False
 
-        ftype = self.comboBoxFiletype.currentText()
-        directory = self.lineEditDirectory.text()
-
-        filenames = [directory+'/'+fname.replace(' ','_')+ftype*(not fname[-len(ftype):]==ftype) for fname in self.filenames]
-        if not self.overwriteCheck(filenames): return
-
-        start, duration, stop_dt = self.getTimes()
+        start, stop, duration, stop_dt = self.getTimes()
 
         try:
             if self.badChannelSelection(self.channels, self.filenames):
@@ -368,10 +361,16 @@ class SaveApp(QWidget):
             if self.dateisPast(stop_dt):
                 raise DateError
         except ConfigError as err:
-            self.textEditConsoleBox.setTextColor(QtGui.QColor('red'))
-            self.print(err.__doc__)
-            self.textEditConsoleBox.setTextColor(QtGui.QColor('black'))
+            self.print_error(err.__doc__)
             return
+
+        ftype = self.comboBoxFiletype.currentText()
+        directory = self.lineEditDirectory.text()
+
+        filenames = [directory+'/'+fname.replace(' ','_')+ftype*(not fname[-len(ftype):]==ftype) for fname in self.filenames]
+        if not self.overwriteCheck(filenames): return
+
+        channels = [self.baseAdr+ch for ch in self.channels]
 
         sampleRate = self.comboBoxDownsample.currentText()
         decimationFactor = 16000 / self.decimationVal[sampleRate]
@@ -379,24 +378,51 @@ class SaveApp(QWidget):
         filesize = self.decimationVal[sampleRate] * 8 * duration * len(self.channels)
         if not self.oversizeCheck(filesize): return
 
+        comments = self.textEditComments.text()
+
         self.print('Directory:', directory)
         self.print('Start:', start)
         self.print('Duration:', duration, 'seconds')
         self.print('Sampling rate:', sampleRate)
 
         self.print('\nChannels:')
-        for ch in self.channels:
+        for ch in channels:
             self.print(ch)
 
         self.print('\nFile names:')
         for fname in filenames:
             self.print(fname)
 
-        #### begin new thread and start saving
+        if ftype=='.mat':
+            savemat_thread = Thread(target=self.saveMat, args=(channels, filenames, start, stop, decimationFactor))
+            savemat_thread.start()
+        else:
+            self.print_error('File type not yet implemented.')
+            return
+
+        if not comments=='':
+            with open(directory+'/'+'comments.txt', 'w') as f:
+                f.write(comments)
+
+    def saveMat(self, channels, filenames, start, stop):
+        with ExitStack() as stack:
+            files = [stack.enter_context(open(fname, 'wb')) for fname in filenames]
+            mat_writers = []
+
+            for i in range(len(files)):
+                mat_writers.append( MatWriter(files[i]) )
+                mat_writers[i].write_preamble()
+
+            get_doocs_data_continuous(channels, save_mat_subroutine,
+                                      start, stop,
+                                      sub_args=(channels, mat_writers, decimationFactor),
+                                      interrupt=lambda : self.interrupt)
+
+            for i in range(len(mat_writers)):
+                mat_writers[i].update_tags()
 
     def interruptSave(self):
         self.interrupt = True
-
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
