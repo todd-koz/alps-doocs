@@ -115,7 +115,10 @@ def get_doocs_data_continuous(DOOCS_addresses,
 ### at the cost of only one channel per file. Thus, every channel of data should
 ### be saved in its own file when using this class. The variable name in the file
 ### is fixed as "data". When loading multiple files in MATLAB, one should assign
-### each array a new variable name to distinguish between them.
+### each array a new variable name to distinguish between them. A description can
+### be included in a 124-character header, viewed on Unix machines by the command
+### "head -c 124 filename.mat". Assumed is that data from DOOCS is uncalibrated,
+### in the form of 16-bit signed integers.
 ################################################################################
 
 class MatWriter():
@@ -123,7 +126,6 @@ class MatWriter():
         self.file = file
         header = header.strip()
         if len(header) > 124:
-            print(f"Header text is too long. Truncated to \"{header[:124]}\"")
             header = header[:124]
         else:
             l = len(header)
