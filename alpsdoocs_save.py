@@ -43,7 +43,6 @@ class ChannelSelect(QWidget):
 
     def __init__(self, parent):
         super().__init__()
-        self.title = 'Select Channels'
         self.left = 100
         self.top = 100
         self.width = 500
@@ -67,9 +66,9 @@ class ChannelSelect(QWidget):
             self.checks.append(QCheckBox(self.channelOptions[i]))
             self.names.append(QLineEdit(self))
 
-        vboxMain = QVBoxLayout(self)
+        vboxMain = QVBoxLayout()
 
-        hboxLabels = QHBoxLayout(self)
+        hboxLabels = QHBoxLayout()
         hboxLabels.addWidget(self.labelChannels)
         hboxLabels.addStretch()
         hboxLabels.addWidget(self.labelNames)
@@ -77,14 +76,14 @@ class ChannelSelect(QWidget):
         vboxMain.addLayout(hboxLabels)
 
         for i in range(len(self.channelOptions)):
-            hbox = QHBoxLayout(self)
+            hbox = QHBoxLayout()
             hbox.addWidget(self.checks[i])
             hbox.addWidget(self.names[i])
             vboxMain.addLayout(hbox)
 
         vboxMain.addStretch()
 
-        hboxButtons = QHBoxLayout(self)
+        hboxButtons = QHBoxLayout()
         hboxButtons.addStretch()
         hboxButtons.addWidget(self.buttonUpdateSelection)
         hboxButtons.addStretch()
@@ -92,13 +91,13 @@ class ChannelSelect(QWidget):
 
         vboxMain.addStretch()
 
-        hboxSelection = QHBoxLayout(self)
+        hboxSelection = QHBoxLayout()
         hboxSelection.addWidget(self.labelSelection)
         hboxSelection.addWidget(self.lineEditSelection)
         vboxMain.addLayout(hboxSelection)
 
         self.setLayout(vboxMain)
-        self.setWindowTitle(self.title)
+        self.setWindowTitle('Select Channels')
         self.setGeometry(self.left, self.top, self.width, self.height)
 
     def updateSelection(self):
@@ -136,11 +135,10 @@ class SaveApp(QWidget):
     def __init__(self):
         super().__init__()
 
-        self.title = 'ALPS DOOCS Save File'
-
         self.interrupt = False
         self.channels = []
         self.filenames = []
+        self.windowChannelSelect = None
 
         self.defineWidgets()
         self.placeWidgets()
@@ -198,10 +196,10 @@ class SaveApp(QWidget):
         self.textEditConsoleBox.setTextColor(QtGui.QColor('black'))
 
     def placeWidgets(self):
-        hboxMain = QHBoxLayout(self)
-        vboxSettings = QVBoxLayout(self)
+        hboxMain = QHBoxLayout()
+        vboxSettings = QVBoxLayout()
 
-        hboxFiletypeDownsample = QHBoxLayout(self)
+        hboxFiletypeDownsample = QHBoxLayout()
         hboxFiletypeDownsample.addWidget(self.labelFiletype)
         hboxFiletypeDownsample.addWidget(self.comboBoxFiletype)
         hboxFiletypeDownsample.addSpacing(20)
@@ -209,58 +207,58 @@ class SaveApp(QWidget):
         hboxFiletypeDownsample.addWidget(self.comboBoxDownsample)
         vboxSettings.addLayout(hboxFiletypeDownsample)
 
-        hboxDirectory = QHBoxLayout(self)
+        hboxDirectory = QHBoxLayout()
         hboxDirectory.addWidget(self.labelDirectory)
         hboxDirectory.addWidget(self.lineEditDirectory)
         hboxDirectory.addWidget(self.buttonSelectFolder)
         vboxSettings.addLayout(hboxDirectory)
 
-        hboxStartDate = QHBoxLayout(self)
+        hboxStartDate = QHBoxLayout()
         hboxStartDate.addWidget(self.labelStartDate)
         hboxStartDate.addWidget(self.lineEditStartDate)
         vboxSettings.addLayout(hboxStartDate)
 
-        hboxStartTime = QHBoxLayout(self)
+        hboxStartTime = QHBoxLayout()
         hboxStartTime.addWidget(self.labelStartTime)
         hboxStartTime.addWidget(self.lineEditStartTime)
         vboxSettings.addLayout(hboxStartTime)
 
-        hboxChannels = QHBoxLayout(self)
+        hboxChannels = QHBoxLayout()
         hboxChannels.addWidget(self.labelChannels)
         hboxChannels.addWidget(self.lineEditChannels)
         hboxChannels.addWidget(self.buttonSelectChannels)
         vboxSettings.addLayout(hboxChannels)
 
-        hboxDuration = QHBoxLayout(self)
-        vboxDuration = QVBoxLayout(self)
+        hboxDuration = QHBoxLayout()
+        vboxDuration = QVBoxLayout()
         vboxDuration.addStretch()
         vboxDuration.addWidget(self.labelDuration)
         hboxDuration.addLayout(vboxDuration)
-        vboxDays = QVBoxLayout(self)
+        vboxDays = QVBoxLayout()
         vboxDays.addWidget(self.labelDays)
         vboxDays.addWidget(self.lineEditDays)
         hboxDuration.addLayout(vboxDays)
-        vboxHours = QVBoxLayout(self)
+        vboxHours = QVBoxLayout()
         vboxHours.addWidget(self.labelHours)
         vboxHours.addWidget(self.lineEditHours)
         hboxDuration.addLayout(vboxHours)
-        vboxMinutes = QVBoxLayout(self)
+        vboxMinutes = QVBoxLayout()
         vboxMinutes.addWidget(self.labelMinutes)
         vboxMinutes.addWidget(self.lineEditMinutes)
         hboxDuration.addLayout(vboxMinutes)
-        vboxSeconds = QVBoxLayout(self)
+        vboxSeconds = QVBoxLayout()
         vboxSeconds.addWidget(self.labelSeconds)
         vboxSeconds.addWidget(self.lineEditSeconds)
         hboxDuration.addLayout(vboxSeconds)
         vboxSettings.addLayout(hboxDuration)
         vboxSettings.addSpacing(20)
 
-        vboxComments = QVBoxLayout(self)
+        vboxComments = QVBoxLayout()
         vboxComments.addWidget(self.labelComments)
         vboxComments.addWidget(self.textEditComments)
         vboxSettings.addLayout(vboxComments)
 
-        hboxStartStop = QHBoxLayout(self)
+        hboxStartStop = QHBoxLayout()
         hboxStartStop.addStretch()
         hboxStartStop.addWidget(self.buttonStartSave)
         hboxStartStop.addWidget(self.buttonInterrupt)
@@ -269,7 +267,7 @@ class SaveApp(QWidget):
 
         hboxMain.addLayout(vboxSettings)
 
-        vboxConsole = QVBoxLayout(self)
+        vboxConsole = QVBoxLayout()
         vboxConsole.addWidget(self.textEditConsoleBox)
         hboxMain.addLayout(vboxConsole)
 
@@ -277,7 +275,7 @@ class SaveApp(QWidget):
         hboxMain.setStretchFactor(vboxConsole, 1)
 
         self.setLayout(hboxMain)
-        self.setWindowTitle(self.title)
+        self.setWindowTitle('ALPS - Save Data from DOOCS')
 
     def print(self, *text):
         for t in text:
@@ -290,8 +288,10 @@ class SaveApp(QWidget):
         self.textEditConsoleBox.setTextColor(QtGui.QColor('black'))
 
     def openChannelSelect(self):
-        self.selectdialog = ChannelSelect(self)
-        self.selectdialog.show()
+        if not self.windowChannelSelect == None:
+            self.windowChannelSelect.close()
+        self.windowChannelSelect = ChannelSelect(self)
+        self.windowChannelSelect.show()
 
     def openFolderSelect(self):
         dialog = QFileDialog()
@@ -423,6 +423,7 @@ class SaveApp(QWidget):
 
     def interruptSave(self):
         self.interrupt = True
+
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
