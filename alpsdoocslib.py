@@ -11,6 +11,88 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from scipy import signal
 import numpy as np
 
+############################### get_doocs_data ####################################
+### This function, adapted from a script written by Sven Karstensen, communicates
+### with the DOOCS DAQ server via the function "pydaq.connect" and pulls the data
+### via the function "pydaq.getdata()". The data retrieved via this command has a
+### dictionary structure with 500 data points contained in channels[0]['data']
+### This modified script appends multiple instances of the getdata() output to
+### generate a large, continuous data file containing all the data for each channel
+### for the time duration specified. unisgned_to_signed is necessary to adapt the 
+### DAQ output from unsigned integers to signed integers.
+###################################################################################
+def unsigned_to_signed(number, maxbits):
+    maxn = 2<<(maxbits - 1)
+    middle = 2<<(maxbits - 1) - 1
+    if number < middle:
+        return number
+    else:
+        return number - maxn
+
+def get_doocs_data(DOOCS_addresses, start, stop,
+                   daq="/daq_data/alps",server="ALPS.DAQ/DAQ.SERVER1/DAQ.DATA.SVR/"): 
+    try:
+       # for NAF environment on NAF cluster
+        err = pydaq.connect(start=start, stop=stop, ddir=daq, exp='alps', chans=DOOCS_addresses, daqservers=server)
+            
+    except pydaq.PyDaqException as e:
+        return e
+    
+    if err == []:
+        stop = False
+        emptycount = 0
+        total = 0
+        stats_list = []
+        chan_all = [np.array([]) for ch in DOOCS_addresses]
+
+        while not stop and (emptycount < 1000000):    
+            try:
+                channels = pydaq.getdata()
+                if channels == []:
+                    emptycount += 1
+                    time.sleep(0.001)
+                    continue
+                if channels == None:
+                    break
+                total += 1
+
+                for chan in channels:
+                    subchan  = len(chan)
+                    daqname = chan[0]['miscellaneous']['daqname']
+                    macropulse = chan[0]['macropulse']
+                    timestamp = chan[0]['timestamp']
+                    found = False
+                    for stats in stats_list:
+                        if stats['daqname'] == daqname:
+                            stats['events'] += 1
+                            found = True
+                            break
+                    if not found:
+                        entry = {}
+                        entry['daqname'] = daqname
+                        entry['events'] = 1
+                        stats_list.append(entry)
+
+                    data_array=chan[0]['data']
+                    data_array_int = np.zeros(len(data_array[0]),int)
+                    i=0
+                    for x in data_array[0]:
+                        data_array_int[i] = unsigned_to_signed(x, 16)
+                        i = i+1
+
+                    which = DOOCS_addresses.index(daqname)
+                    chan_all[which] = np.concatenate((chan_all[which],data_array_int))
+
+            except Exception as err:
+                return break
+
+        summary = f"Total events: {total}, emptycount: {emptycount}"
+        for stats in stats_list:
+            summary += '\n' + stats['daqname'] + ':\t' + stats['events'] + 'events'
+
+        pydaq.disconnect()
+        return chan_all, summary
+
 ########################## get_doocs_data_continuous ##############################
 ### This function is adapted from a script by Sven Karstensen that communicates
 ### with the DAQ server via "pydaq.connect()" and pulls data via "pydaq.getdata()".
@@ -28,29 +110,25 @@ import numpy as np
 ### default, it is a function that always returns False, which never interrupts.
 ###################################################################################
 
-def get_doocs_data_continuous(DOOCS_addresses,
-                              subroutine,
-                              start="2022-03-01T00:00:01",
-                              stop="2022-03-01T00:01:01",
-                              daq="/daq_data/alps",
-                              server="ALPS.DAQ/DAQ.SERVER1/DAQ.DATA.SVR/",
+def get_doocs_data_continuous(DOOCS_addresses, subroutine, start, stop,
                               sub_args=None,
-                              interrupt=lambda : False):
+                              interrupt=lambda : False,
+                              daq="/daq_data/alps",
+                              server="ALPS.DAQ/DAQ.SERVER1/DAQ.DATA.SVR/"):
 
     try:
        # for NAF environment on NAF cluster
         err = pydaq.connect(start=start, stop=stop, ddir=daq, exp='alps', chans=DOOCS_addresses, daqservers=server)
 
-    except pydaq.PyDaqException as e:
-        return e
+    except pydaq.PyDaqException as err:
+        return err
 
     if err == []:
-
-        stop = False
         emptycount = 0
         total = 0
         stats_list = []
-        while not stop and (emptycount < 1000000):
+
+        while (emptycount < 1000000):
             try:
                 channels = pydaq.getdata()
                 if channels == []:
@@ -94,8 +172,7 @@ def get_doocs_data_continuous(DOOCS_addresses,
                     subroutine(data_to_subroutine, *sub_args)
 
             except Exception as err:
-                print('Something wrong ... stopping %s'%str(err))
-                stop = True
+                break
 
             if interrupt():
                 break
@@ -115,10 +192,7 @@ def get_doocs_data_continuous(DOOCS_addresses,
 ### at the cost of only one channel per file. Thus, every channel of data should
 ### be saved in its own file when using this class. The variable name in the file
 ### is fixed as "data". When loading multiple files in MATLAB, one should assign
-### each array a new variable name to distinguish between them. A description can
-### be included in a 124-character header, viewed on Unix machines by the command
-### "head -c 124 filename.mat". Assumed is that data from DOOCS is uncalibrated,
-### in the form of 16-bit signed integers.
+### each array a new variable name to distinguish between them.
 ################################################################################
 
 class MatWriter():
@@ -158,7 +232,7 @@ class MatWriter():
     def write_data(self, arr):
         self.file.write( arr.tobytes() )
 
-#   ### IMPORTANT: this method must be called after all data is written, before you close the file.
+    ### IMPORTANT: this method must be called after all data is written, before you close the file.
     def update_tags(self):
         current_pos = self.file.tell()
         pos = {'byte count tot': 132, 'dims': 164, 'byte count vector': 180}
@@ -222,14 +296,16 @@ def save_mat_custom(channels, filenames, start, stop,
             mat_writers.append( MatWriter(files[i], header=header_text) )
             mat_writers[i].write_preamble()
 
-        get_doocs_data_continuous(channels, save_mat_subroutine,
-                                      start=start, stop=stop,
-                                      daq=daq, server=server,
-                                      sub_args=(channels, mat_writers))
+        result = get_doocs_data_continuous(channels, save_mat_subroutine,
+                                           start=start, stop=stop,
+                                           daq=daq, server=server,
+                                           sub_args=(channels, mat_writers))
 
         ### IMPORTANT: always call the .update_tags() method at the end of writing files
         for i in range(len(mat_writers)):
             mat_writers[i].update_tags()
+
+        return result
 
 #########################################################################
 ### The following code uses the pydoocs.read() function to save data from
@@ -300,7 +376,7 @@ def pydoocs_save_csv_multiple(channels, filepaths, duration):
                                duration) for i in range(nch)]
     done = [False]*nch
     result = [None]*nch
-    while sum(done) == nch:
+    while not sum(done) == nch:
         for i in range(len(tasks)):
             try:
                 out = tasks[i].result(timeout=1)
@@ -335,4 +411,3 @@ def signal_process(data,fs=16000,t0=0,process="None",filtertype="None",filterfre
     if process=="PSD":
         myPSD = myTS.psd(fftlength,overlap,window,method)
         return myPSD
-    
