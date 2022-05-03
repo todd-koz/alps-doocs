@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from threading import Thread
 from scipy import signal
 
-from alpsdoocslib import get_doocs_data
+#from alpsdoocslib import get_doocs_data
 
 pg.setConfigOption('background', 'w') # Standard (white)
 
@@ -42,7 +42,24 @@ class SpectrumPlot(QWidget):
         "64 Hz": 64,
         "32 Hz": 32 }
 
-    def __init__(self, parent):
+    windowOptions = [
+        'barthann',
+        'bartlett',
+        'blackmanharris',
+        'bohman',
+        'boxcar',
+        'cosine',
+        'exponential',
+        'flattop',
+        'hamming',
+        'hann',
+        'nuttall',
+        'parzen',
+        'taylor',
+        'triang',
+        'tukey']
+
+    def __init__(self, parent=None):
         super().__init__()
 
         self.parent = parent
@@ -66,17 +83,29 @@ class SpectrumPlot(QWidget):
         self.labelChannels = QLabel('Channels:')
         self.labelTimebase = QLabel('Timebase (s):')
         self.labelAveraging = QLabel('Averaging:')
+        self.labelWindow = QLabel('Window:')
+        self.labelScaling = QLabel('Scaling:')
 
         self.comboBoxChannelMenu = QComboBox(self)
         self.comboBoxChannelMenu.addItems(self.channelOptions)
+
         self.lineEditTimebase = QLineEdit(self)
+        self.lineEditTimebase.setText('1')
+
         self.lineEditAveraging = QLineEdit(self)
+        self.lineEditAveraging.setText('1')
+
+        self.comboBoxWindow = QComboBox(self)
+        self.comboBoxWindow.addItems(self.windowOptions)
+        self.comboBoxWindow.setCurrentText('hann')
+        self.comboBoxScaling = QComboBox(self)
+        self.comboBoxScaling.addItems(['spectrum (V^2)', 'density (V^2/Hz)'])
 
         self.comboBoxChannelMenu.currentTextChanged.connect(self.clearBuffer)
         self.lineEditTimebase.textEdited.connect(self.clearBuffer)
         self.lineEditAveraging.textEdited.connect(self.clearBuffer)
 
-        self.buttonStart = QPushButton('Plot Spectrum', self)
+        self.buttonStart = QPushButton('Start Plot', self)
         self.buttonStart.clicked.connect(self.startClick)
         self.buttonStop = QPushButton('Stop Plot', self)
         self.buttonStop.clicked.connect(self.stopClick)
@@ -91,13 +120,27 @@ class SpectrumPlot(QWidget):
 
         hboxTimebase = QHBoxLayout()
         hboxTimebase.addWidget(self.labelTimebase)
+        hboxTimebase.addStretch()
         hboxTimebase.addWidget(self.lineEditTimebase)
         vboxSettings.addLayout(hboxTimebase)
 
         hboxAveraging = QHBoxLayout()
         hboxAveraging.addWidget(self.labelAveraging)
+        hboxAveraging.addStretch()
         hboxAveraging.addWidget(self.lineEditAveraging)
         vboxSettings.addLayout(hboxAveraging)
+
+        hboxWindow = QHBoxLayout()
+        hboxWindow.addWidget(self.labelWindow)
+        hboxWindow.addWidget(self.comboBoxWindow)
+        vboxSettings.addLayout(hboxWindow)
+
+        hboxScaling = QHBoxLayout()
+        hboxScaling.addWidget(self.labelScaling)
+        hboxScaling.addWidget(self.comboBoxScaling)
+        vboxSettings.addLayout(hboxScaling)
+
+        vboxSettings.addSpacing(20)
 
         hboxButtons = QHBoxLayout()
         hboxButtons.addStretch()
@@ -105,12 +148,14 @@ class SpectrumPlot(QWidget):
         hboxButtons.addWidget(self.buttonStop)
         hboxButtons.addStretch()
         vboxSettings.addLayout(hboxButtons)
+        vboxSettings.addStretch()
 
         hboxMain.addLayout(vboxSettings)
         hboxMain.addWidget(self.plotWidget, 5)
 
         self.setLayout(hboxMain)
         self.setWindowTitle('Spectrum Plot')
+        self.setGeometry(100, 100, 1280, 720)
 
     def stopClick(self):
         self.interrupt = True
@@ -129,7 +174,10 @@ class SpectrumPlot(QWidget):
         prevTime = None
         while not self.interrupt:
             stop_dt = datetime.now()
-            averaging = int(self.lineEditAveraging.text())
+            try:
+                averaging = int(self.lineEditAveraging.text())
+            except:
+                averaging = 1
             duration_dt = timedelta(seconds=int(self.lineEditTimebase.text())) * averaging
 
             if not prevTime == None:
@@ -147,7 +195,9 @@ class SpectrumPlot(QWidget):
 
             result = get_doocs_data([channel], start, stop)
             if not isinstance(result, Exception):
-                self.buffer.append( {'data':result[0][0], 'averaging':averaging} )
+                window = self.comboBoxWindow.currentText()
+                scaling = self.comboBoxScaling.currentText()
+                self.buffer.append( {'data':result[0][0], 'averaging':averaging, 'window':window, 'scaling':scaling} )
 
             prevTime = stop_dt
 
@@ -157,7 +207,7 @@ class SpectrumPlot(QWidget):
                 next = self.buffer[0]
                 self.buffer.pop(0)
 
-                freqs, spec = signal.periodogram(next['data'], 16000, window='hann', scaling='spectrum',
+                freqs, spec = signal.periodogram(next['data'], 16000, window=next['window'], scaling=next['scaling'],
                                                  nperseg=len(next['data'])/next['averaging'])
 
                 self.plotWidget.clear()
