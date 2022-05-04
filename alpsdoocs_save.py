@@ -1,6 +1,6 @@
-from PyQt5.QtWidgets import (QPushButton, QWidget, QLabel, QLineEdit,
-    QTextEdit, QCheckBox, QComboBox, QSizePolicy,
-    QGridLayout, QApplication, QHBoxLayout, QVBoxLayout,
+from PyQt5.QtWidgets import (QWidget, QLabel, QLineEdit,
+    QTextEdit, QPushButton, QCheckBox, QComboBox,
+    QApplication, QHBoxLayout, QVBoxLayout,
     QFileDialog, QMessageBox)
 from PyQt5 import QtGui
 
@@ -8,8 +8,7 @@ import sys
 import os
 import os.path
 import time
-from datetime import datetime
-from datetime import timedelta
+from datetime import datetime, timedelta
 from threading import Thread
 from contextlib import ExitStack
 
@@ -375,7 +374,7 @@ class SaveApp(QWidget):
         sampleRate = self.comboBoxDownsample.currentText()
         decimationFactor = 16000 / self.decimationVal[sampleRate]
 
-        filesize = self.decimationVal[sampleRate] * 8 * duration * len(self.channels)
+        filesize = self.decimationVal[sampleRate] * 8 * duration * len(channels)
         if not self.oversizeCheck(filesize): return
 
         comments = self.textEditComments.text()
@@ -413,13 +412,15 @@ class SaveApp(QWidget):
                 mat_writers.append( MatWriter(files[i]) )
                 mat_writers[i].write_preamble()
 
-            get_doocs_data_continuous(channels, save_mat_subroutine,
-                                      start, stop,
-                                      sub_args=(channels, mat_writers, decimationFactor),
-                                      interrupt=lambda : self.interrupt)
+            res = get_doocs_data_continuous(channels, save_mat_subroutine,
+                                            start, stop,
+                                            sub_args=(channels, mat_writers, decimationFactor),
+                                            interrupt=lambda : self.interrupt)
 
             for i in range(len(mat_writers)):
                 mat_writers[i].update_tags()
+
+        self.print(res)
 
     def interruptSave(self):
         self.interrupt = True
