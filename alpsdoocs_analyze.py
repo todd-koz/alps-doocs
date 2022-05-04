@@ -1,6 +1,6 @@
-from PyQt5.QtWidgets import (QPushButton, QWidget, QLabel, QLineEdit,
-    QTextEdit, QCheckBox, QComboBox, QSizePolicy,
-    QGridLayout, QApplication, QHBoxLayout, QVBoxLayout,
+from PyQt5.QtWidgets import (QWidget, QLabel, QLineEdit,
+    QTextEdit, QPushButton, QCheckBox, QComboBox,
+    QApplication, QHBoxLayout, QVBoxLayout,
     QFileDialog, QMessageBox)
 from PyQt5 import QtGui
 import pyqtgraph as pg
@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from threading import Thread
 from scipy import signal
 
-#from alpsdoocslib import get_doocs_data
+from alpsdoocslib import get_doocs_data
 
 pg.setConfigOption('background', 'w') # Standard (white)
 
@@ -111,46 +111,39 @@ class SpectrumPlot(QWidget):
         self.buttonStop.clicked.connect(self.stopClick)
 
         hboxMain = QHBoxLayout()
-        vboxSettings = QVBoxLayout()
+        vboxLeftPane = QVBoxLayout()
+        hboxSettings = QHBoxLayout()
 
-        hboxChannels = QHBoxLayout()
-        hboxChannels.addWidget(self.labelChannels)
-        hboxChannels.addWidget(self.comboBoxChannelMenu)
-        vboxSettings.addLayout(hboxChannels)
+        vboxLabels = QVBoxLayout()
+        vboxFields = QVBoxLayout()
 
-        hboxTimebase = QHBoxLayout()
-        hboxTimebase.addWidget(self.labelTimebase)
-        hboxTimebase.addStretch()
-        hboxTimebase.addWidget(self.lineEditTimebase)
-        vboxSettings.addLayout(hboxTimebase)
+        vboxLabels.addWidget(self.labelChannels)
+        vboxLabels.addWidget(self.labelTimebase)
+        vboxLabels.addWidget(self.labelAveraging)
+        vboxLabels.addWidget(self.labelWindow)
+        vboxLabels.addWidget(self.labelScaling)
 
-        hboxAveraging = QHBoxLayout()
-        hboxAveraging.addWidget(self.labelAveraging)
-        hboxAveraging.addStretch()
-        hboxAveraging.addWidget(self.lineEditAveraging)
-        vboxSettings.addLayout(hboxAveraging)
+        vboxFields.addWidget(self.comboBoxChannelMenu)
+        vboxFields.addWidget(self.lineEditTimebase)
+        vboxFields.addWidget(self.lineEditAveraging)
+        vboxFields.addWidget(self.comboBoxWindow)
+        vboxFields.addWidget(self.comboBoxScaling)
 
-        hboxWindow = QHBoxLayout()
-        hboxWindow.addWidget(self.labelWindow)
-        hboxWindow.addWidget(self.comboBoxWindow)
-        vboxSettings.addLayout(hboxWindow)
-
-        hboxScaling = QHBoxLayout()
-        hboxScaling.addWidget(self.labelScaling)
-        hboxScaling.addWidget(self.comboBoxScaling)
-        vboxSettings.addLayout(hboxScaling)
-
-        vboxSettings.addSpacing(20)
+        hboxSettings.addLayout(vboxLabels)
+        hboxSettings.addLayout(vboxFields)
+        vboxLeftPane.addLayout(hboxSettings)
+        vboxLeftPane.addSpacing(20)
 
         hboxButtons = QHBoxLayout()
         hboxButtons.addStretch()
         hboxButtons.addWidget(self.buttonStart)
         hboxButtons.addWidget(self.buttonStop)
         hboxButtons.addStretch()
-        vboxSettings.addLayout(hboxButtons)
-        vboxSettings.addStretch()
 
-        hboxMain.addLayout(vboxSettings)
+        vboxLeftPane.addLayout(hboxButtons)
+        vboxLeftPane.addStretch()
+
+        hboxMain.addLayout(vboxLeftPane)
         hboxMain.addWidget(self.plotWidget, 5)
 
         self.setLayout(hboxMain)
@@ -194,7 +187,9 @@ class SpectrumPlot(QWidget):
             stop = stop_dt.strftime('%Y-%m-%dT%H:%M:%S')
 
             result = get_doocs_data([channel], start, stop)
-            if not isinstance(result, Exception):
+            if isinstance(result, str):
+                self.interrupt = True
+            else:
                 window = self.comboBoxWindow.currentText()
                 scaling = self.comboBoxScaling.currentText()
                 self.buffer.append( {'data':result[0][0], 'averaging':averaging, 'window':window, 'scaling':scaling} )
