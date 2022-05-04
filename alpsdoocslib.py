@@ -7,6 +7,7 @@ import time
 from struct import pack
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from traceback import format_exc
 
 from scipy import signal
 import numpy as np
@@ -32,20 +33,20 @@ def unsigned_to_signed(number, maxbits):
 def get_doocs_data(DOOCS_addresses, start, stop,
                    daq="/daq_data/alps",server="ALPS.DAQ/DAQ.SERVER1/DAQ.DATA.SVR/"): 
     try:
-       # for NAF environment on NAF cluster
+        # for NAF environment on NAF cluster
         err = pydaq.connect(start=start, stop=stop, ddir=daq, exp='alps', chans=DOOCS_addresses, daqservers=server)
             
-    except pydaq.PyDaqException as e:
-        return e
+    except pydaq.PyDaqException:
+        return format_exc()
     
     if err == []:
-        stop = False
         emptycount = 0
         total = 0
         stats_list = []
         chan_all = [np.array([]) for ch in DOOCS_addresses]
+        summary = ''
 
-        while not stop and (emptycount < 1000000):    
+        while (emptycount < 1000000):
             try:
                 channels = pydaq.getdata()
                 if channels == []:
@@ -84,11 +85,12 @@ def get_doocs_data(DOOCS_addresses, start, stop,
                     chan_all[which] = np.concatenate((chan_all[which],data_array_int))
 
             except Exception as err:
-                return break
+                summary += format_exc() + '\n'
+                break
 
-        summary = f"Total events: {total}, emptycount: {emptycount}"
+        summary += f"Total events: {total}, emptycount: {emptycount}\n"
         for stats in stats_list:
-            summary += '\n' + stats['daqname'] + ':\t' + stats['events'] + 'events'
+            summary += stats['daqname'] + ':\t' + stats['events'] + 'events'
 
         pydaq.disconnect()
         return chan_all, summary
@@ -117,16 +119,17 @@ def get_doocs_data_continuous(DOOCS_addresses, subroutine, start, stop,
                               server="ALPS.DAQ/DAQ.SERVER1/DAQ.DATA.SVR/"):
 
     try:
-       # for NAF environment on NAF cluster
+        # for NAF environment on NAF cluster
         err = pydaq.connect(start=start, stop=stop, ddir=daq, exp='alps', chans=DOOCS_addresses, daqservers=server)
 
-    except pydaq.PyDaqException as err:
-        return err
+    except pydaq.PyDaqException:
+        return format_exc()
 
     if err == []:
         emptycount = 0
         total = 0
         stats_list = []
+        summary = ''
 
         while (emptycount < 1000000):
             try:
@@ -163,7 +166,7 @@ def get_doocs_data_continuous(DOOCS_addresses, subroutine, start, stop,
                     for x in data_array[0]:
                         data_array_int[i] = unsigned_to_signed(x, 16)
                         i += 1
-                        
+
                     data_to_subroutine.append( {'data':data_array_int, 'daqname':daqname, 'macropulse':macropulse, 'timestamp':timestamp} )
 
                 if sub_args == None:
@@ -172,14 +175,15 @@ def get_doocs_data_continuous(DOOCS_addresses, subroutine, start, stop,
                     subroutine(data_to_subroutine, *sub_args)
 
             except Exception as err:
+                summary += format_exc() + '\n'
                 break
 
             if interrupt():
                 break
 
-        summary = f"Total events: {total}, emptycount: {emptycount}"
+        summary += f"Total events: {total}, emptycount: {emptycount}\n"
         for stats in stats_list:
-            summary += '\n' + stats['daqname'] + ':\t' + stats['events'] + 'events'
+            summary += stats['daqname'] + ':\t' + stats['events'] + 'events'
 
         pydaq.disconnect()
         return summary
@@ -264,17 +268,7 @@ class MatWriter():
 ### define the subroutine
 def save_mat_subroutine(data_dict, channels, writers, decimationFactor=1):
     for i in range(len(data_dict)):
-        q = int(decimationFactor)
-        decimated_data = data_dict[i]['data']
-
-        ### scipy's advice to run decimate multiple times if factor is big
-        while q > 8:
-            decimated_data = signal.decimate(decimated_data, 8)
-            q = q // 8
-
-        if q > 1:
-            decimated_data = signal.decimate(decimated_data, q)
-
+        decimated_data = downsample(data_dict[i]['data'], decimationFactor)
         which = channels.index( data_dict[i]['daqname'] )
         writers[which].write_data( decimated_data )
 
@@ -305,7 +299,7 @@ def save_mat_custom(channels, filenames, start, stop,
         for i in range(len(mat_writers)):
             mat_writers[i].update_tags()
 
-        return result
+    return result
 
 #########################################################################
 ### The following code uses the pydoocs.read() function to save data from
@@ -371,19 +365,21 @@ def pydoocs_save_csv_multiple(channels, filepaths, duration):
     nch = len(channels)
     executor = ThreadPoolExecutor(max_workers=nch)
     tasks = [executor.submit(pydoocs_save_csv,
-                               channels[i],
-                               filepaths[i],
-                               duration) for i in range(nch)]
+                             channels[i],
+                             filepaths[i],
+                             duration) for i in range(nch)]
     done = [False]*nch
     result = [None]*nch
-    while not sum(done) == nch:
+    while sum(done) < nch:
         for i in range(len(tasks)):
-            try:
-                out = tasks[i].result(timeout=1)
-                done[i] = True
-                result[i] = out
-            except TimeoutError:
-                continue
+            if not done[i]:
+                try:
+                    out = tasks[i].result(timeout=1)
+                    done[i] = True
+                    result[i] = out
+                except TimeoutError:
+                    continue
+            else: continue
     return result
 
 ########################## signal_process #####################################
@@ -391,6 +387,7 @@ def pydoocs_save_csv_multiple(channels, filepaths, duration):
 ### by converting to a TimeSeries object, then subjecting it to GWpy function to
 ### filter or generate FrequencySeries objects. Returns raw data for plotting.
 ###############################################################################
+
 def signal_process(data,fs=16000,t0=0,process="None",filtertype="None",filterfreq=0,flow=0,fhigh=0,zeros=[],poles=[],gain=0):
     myTS = TimeSeries(data=data[0])
     if filtertype=="lowpass":
@@ -411,3 +408,14 @@ def signal_process(data,fs=16000,t0=0,process="None",filtertype="None",filterfre
     if process=="PSD":
         myPSD = myTS.psd(fftlength,overlap,window,method)
         return myPSD
+
+################ miscellaneous utility functions ################
+
+def downsample(arr, factor):
+    #### scipy's advice to run decimate multiple times if factor is big
+    while factor > 8:
+        decimated_data = signal.decimate(decimated_data, 8)
+        factor = factor // 8
+    if factor > 1:
+        decimated_data = signal.decimate(decimated_data, factor)
+    return decimated_data
