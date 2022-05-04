@@ -72,8 +72,8 @@ class SpectrumPlot(QWidget):
         font.setPixelSize(25)
 
         self.plotWidget = pg.PlotWidget()
-        self.plotWidget.setLabel('bottom', 'Frequency [Hz]', units='s', size='40pt')
-        self.plotWidget.setLabel('left', 'Power [Calibrated Units^2]', size ="40pt")
+        self.plotWidget.setLabel('bottom', 'Frequency', units='Hz', size='40pt')
+        self.plotWidget.setLabel('left', 'Power', units='un-calibrated units^2', size ="40pt")
         self.plotWidget.setLogMode(True, True)
         self.plotWidget.showGrid(True, True, alpha=1.0)
         self.plotWidget.getAxis("bottom").tickFont = font
@@ -81,6 +81,7 @@ class SpectrumPlot(QWidget):
         self.plotWidget.enableAutoRange()
 
         self.labelChannels = QLabel('Channels:')
+        self.labelCalibration = QLabel('Calibration Factor:')
         self.labelTimebase = QLabel('Timebase (s):')
         self.labelAveraging = QLabel('Averaging:')
         self.labelWindow = QLabel('Window:')
@@ -88,6 +89,9 @@ class SpectrumPlot(QWidget):
 
         self.comboBoxChannelMenu = QComboBox(self)
         self.comboBoxChannelMenu.addItems(self.channelOptions)
+
+        self.lineEditCalibration = QLineEdit(self)
+        self.lineEditCalibration.setText('8.1e-4')
 
         self.lineEditTimebase = QLineEdit(self)
         self.lineEditTimebase.setText('1')
@@ -98,17 +102,17 @@ class SpectrumPlot(QWidget):
         self.comboBoxWindow = QComboBox(self)
         self.comboBoxWindow.addItems(self.windowOptions)
         self.comboBoxWindow.setCurrentText('hann')
-        self.comboBoxScaling = QComboBox(self)
-        self.comboBoxScaling.addItems(['spectrum (V^2)', 'density (V^2/Hz)'])
 
-        self.comboBoxChannelMenu.currentTextChanged.connect(self.clearBuffer)
-        self.lineEditTimebase.textEdited.connect(self.clearBuffer)
-        self.lineEditAveraging.textEdited.connect(self.clearBuffer)
+        self.comboBoxScaling = QComboBox(self)
+        self.comboBoxScaling.addItems(['spectrum', 'density'])
 
         self.buttonStart = QPushButton('Start Plot', self)
         self.buttonStart.clicked.connect(self.startClick)
         self.buttonStop = QPushButton('Stop Plot', self)
         self.buttonStop.clicked.connect(self.stopClick)
+
+        self.textEditConsole = QTextEdit(self)
+        self.textEditConsole.setReadOnly(True)
 
         hboxMain = QHBoxLayout()
         vboxLeftPane = QVBoxLayout()
@@ -118,12 +122,14 @@ class SpectrumPlot(QWidget):
         vboxFields = QVBoxLayout()
 
         vboxLabels.addWidget(self.labelChannels)
+        vboxLabels.addWidget(self.labelCalibration)
         vboxLabels.addWidget(self.labelTimebase)
         vboxLabels.addWidget(self.labelAveraging)
         vboxLabels.addWidget(self.labelWindow)
         vboxLabels.addWidget(self.labelScaling)
 
         vboxFields.addWidget(self.comboBoxChannelMenu)
+        vboxFields.addWidget(self.lineEditCalibration)
         vboxFields.addWidget(self.lineEditTimebase)
         vboxFields.addWidget(self.lineEditAveraging)
         vboxFields.addWidget(self.comboBoxWindow)
@@ -142,6 +148,7 @@ class SpectrumPlot(QWidget):
 
         vboxLeftPane.addLayout(hboxButtons)
         vboxLeftPane.addStretch()
+        vboxLeftPane.addWidget(self.textEditConsole)
 
         hboxMain.addLayout(vboxLeftPane)
         hboxMain.addWidget(self.plotWidget, 5)
@@ -152,67 +159,71 @@ class SpectrumPlot(QWidget):
 
     def stopClick(self):
         self.interrupt = True
+        self.setEnableSetings(True)
 
     def startClick(self):
         self.interrupt = False
-        getDataThread = Thread(target=self.getData)
+        self.setEnableSettings(False)
+
+        channel = self.baseAdr + self.comboBoxChannelMenu.currentText()
+        averaging = int(self.lineEditAveraging.text())
+        timebase = int(self.lineEditTimebase.text())
+        duration_dt = timedelta(seconds=timebase) * averaging
+
+        calibration = float(self.lineEditCalibration.text())
+        window = self.comboBoxWindow.currentText()
+        scaling = self.comboBoxScaling.currentText()
+
+        getDataThread = Thread(target=self.getData, args=(channel, duration_dt))
         getDataThread.start()
-        plotSpecThread = Thread(target=self.plotSpec)
+        plotSpecThread = Thread(target=self.plotSpec, args=(calibration, averaging, window, scaling))
         plotSpecThread.start()
 
-    def clearBuffer(self):
-        self.buffer.clear()
+    def setEnableSettings(self, enabled):
+        self.comboBoxChannelMenu.setEnabled(enabled)
+        self.lineEditCalibration.setEnabled(enabled)
+        self.lineEditTimebase.setEnabled(enabled)
+        self.lineEditAveraging.setEnabled(enabled)
+        self.comboBoxWindow.setEnabled(enabled)
+        self.comboBoxScaling.setEnabled(enabled)
 
-    def getData(self):
-        prevTime = None
+    def getData(self, channel, duration_dt):
+        batch = 0
         while not self.interrupt:
+            batch += 1
+
             stop_dt = datetime.now()
-            try:
-                averaging = int(self.lineEditAveraging.text())
-            except:
-                averaging = 1
-            duration_dt = timedelta(seconds=int(self.lineEditTimebase.text())) * averaging
-
-            if not prevTime == None:
-                if prevTime > stop_dt - duration_dt:
-                    waitTime = (prevTime-(stop_dt-duration_dt)).seconds
-                    time.sleep(waitTime)
-                    continue
-
-            timebase = duration_dt.seconds
-            channel = self.baseAdr + self.comboBoxChannelMenu.currentText()
-
-            start_dt = stop_dt - timebase
+            start_dt = stop_dt - duration_dt
             start = start_dt.strftime('%Y-%m-%dT%H:%M:%S')
             stop = stop_dt.strftime('%Y-%m-%dT%H:%M:%S')
 
             result = get_doocs_data([channel], start, stop)
             if isinstance(result, str):
-                self.interrupt = True
+                self.stopClick()
+                self.textEditConsole.setText(result+'\nPlotting stopped.')
             else:
-                window = self.comboBoxWindow.currentText()
-                scaling = self.comboBoxScaling.currentText()
-                self.buffer.append( {'data':result[0][0], 'averaging':averaging, 'window':window, 'scaling':scaling} )
+                self.buffer.append( result[0][0] )
+                self.textEditConsole.setText('Batch: ' + str(batch) + '\n' + result[1])
 
-            prevTime = stop_dt
-
-    def plotSpec(self):
+    def plotSpec(self, calibration, averaging, window, scaling):
+        batch = 0
         while not self.interrupt:
+            batch += 1
             if len(self.buffer) > 1:
-                next = self.buffer[0]
+                calibrated_data = self.buffer[0] * calibration
                 self.buffer.pop(0)
 
-                freqs, spec = signal.periodogram(next['data'], 16000, window=next['window'], scaling=next['scaling'],
-                                                 nperseg=len(next['data'])/next['averaging'])
+                freqs, spec = signal.welch(calibrated_data, 16000, window=window, scaling=scaling,
+                                                 nperseg=len(calibrated_data)/averaging)
 
                 self.plotWidget.clear()
+                self.plotWidget.setLabel('top', )
                 curve1 = self.plotWidget.plot()
                 curve1.setPen(color=(0,33,165))    # UF blue
                 curve1.setData(freqs, spec)
                 pg.Qt.QtGui.QApplication.processEvents()
             else:
                 time.sleep(0.1)
-
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
