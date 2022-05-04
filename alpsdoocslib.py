@@ -7,6 +7,7 @@ import time
 from struct import pack
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from contextlib import ExitStack, contextmanager
 from traceback import format_exc
 
 from scipy import signal
@@ -209,6 +210,7 @@ class MatWriter():
             l = len(header)
             header = header + ' '*(124-l)
         self.header = header
+        self.tagcomplete = False
 
     def write_preamble(self):
         header = pack('124c', *[self.header[i].encode('ascii') for i in range(124)])
@@ -233,7 +235,11 @@ class MatWriter():
         self.file.write(matrixName)
         self.file.write(tagActualData)
 
-    def write_data(self, arr):
+    def write(self, arr):
+        if not type(arr)==np.ndarray:
+            arr = np.array(arr, dtype=np.int16)
+        elif not arr.dtype == np.int16:
+            arr = arr.astype(np.int16)
         self.file.write( arr.tobytes() )
 
     ### IMPORTANT: this method must be called after all data is written, before you close the file.
@@ -262,6 +268,24 @@ class MatWriter():
 
         self.file.seek( byte_count_tot )
 
+        self.tagcomplete = True
+
+    def close(self):
+        if self.tagcomplete:
+            self.update_tags()
+        self.file.close()
+
+@contextmanager
+def open_mat_context(path, header):
+    f = open(path, 'wb')
+    mat_writer = MatWriter(f, header)
+    mat_writer.write_preamble()
+    try:
+        yield mat_writer
+    finally:
+        mat_writer.update_tags()
+        mat_writer.close()
+
 ####################### EXAMPLE #######################
 ### using "get_doocs_data_continuous()" and MatWriter()
 
@@ -270,23 +294,22 @@ def save_mat_subroutine(data_dict, channels, writers, decimationFactor=1):
     for i in range(len(data_dict)):
         decimated_data = downsample(data_dict[i]['data'], decimationFactor)
         which = channels.index( data_dict[i]['daqname'] )
-        writers[which].write_data( decimated_data )
+        writers[which].write( decimated_data )
 
 ### Main program
-def save_mat_custom(channels, filenames, start, stop,
+def save_mat_custom(channels, filepaths, start, stop,
                     daq="/daq_data/alps", server="ALPS.DAQ/DAQ.SERVER1/DAQ.DATA.SVR/"):
 
     ### appending '.mat' extension if not already there
-    filenames = [filenames[i]+'.mat'*(not filenames[i][-4:]=='.mat') for i in range(len(filenames))]
+    filepaths = [fpath + '.mat'*(not fpath[-4:]=='.mat') for fpath in filepaths]
 
     ### using ExitStack as the context manager because there are variable number of files to open
-    from contextlib import ExitStack
     with ExitStack() as stack:
-        files = [stack.enter_context(open(file_name, 'wb')) for file_name in filenames]
+        files = [stack.enter_context(open(fpath, 'wb')) for fpath in filepaths]
         mat_writers = []
 
         for i in range(len(files)):
-            header_text = channels[i] + ' from ' + start + ' until ' + stop + ' ' + comments[i]
+            header_text = channels[i] + ' from ' + start + ' until ' + stop
             mat_writers.append( MatWriter(files[i], header=header_text) )
             mat_writers[i].write_preamble()
 
