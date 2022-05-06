@@ -2,6 +2,7 @@ from PyQt5.QtWidgets import (QWidget, QLabel, QLineEdit,
     QTextEdit, QPushButton, QCheckBox, QComboBox,
     QApplication, QHBoxLayout, QVBoxLayout,
     QFileDialog, QMessageBox)
+from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 from PyQt5 import QtGui
 import pyqtgraph as pg
 
@@ -14,6 +15,75 @@ from scipy import signal
 from alpsdoocslib import get_doocs_data
 
 pg.setConfigOption('background', 'w') # Standard (white)
+
+class SpectrumPlotWorker(QObject):
+    finished = pyqtSignal()
+
+    def __init__(self, parent, calibration, averaging, window, scaling):
+        super().__init__()
+        self.parent = parent
+        self.calibration = calibration
+        self.averaging = averaging
+        self.window = window
+        self.scaling = scaling
+
+    @pyqtSlot()
+    def interruptListen(self):
+        self.interrupt = True
+
+    def run(self):
+        batch = 0
+        while not self.interrupt:
+            batch += 1
+            if len(self.buffer) > 0:
+                calibrated_data = self.parent.buffer[0] * calibration
+                self.parent.buffer.pop(0)
+
+                freqs, spec = signal.welch(calibrated_data, 16000, window=window, scaling=scaling,
+                                                 nperseg=len(calibrated_data)/averaging)
+
+                self.parent.plotWidget.clear()
+                self.parent.plotWidget.setLabel('top', f'Power Spectrum - batch {batch}')
+                curve1 = self.parent.plotWidget.plot()
+                curve1.setPen(color=(0,33,165))    # UF blue
+                curve1.setData(freqs, spec)
+                pg.Qt.QtGui.QApplication.processEvents()
+            else:
+                time.sleep(0.1)
+
+        self.finished.emit()
+
+class GetDataWorker(QObject):
+    finished = pyqtSignal()
+    progress = pyqtSignal(str)
+
+    def __init__(self, parent, channel, duration_dt):
+        super().__init__()
+        self.parent = parent
+        self.channel = channel
+        self.duration_dt = duration_dt
+
+    @pyqtSlot()
+    def interruptListen(self):
+        self.interrupt = True
+
+    def run(self):
+        batch = 0
+        while not self.interrupt:
+            batch += 1
+            stop_dt = datetime.now()
+            start_dt = stop_dt - self.duration_dt
+            start = start_dt.strftime('%Y-%m-%dT%H:%M:%S')
+            stop = stop_dt.strftime('%Y-%m-%dT%H:%M:%S')
+
+            result = get_doocs_data([self.channel], start, stop)
+            if isinstance(result, str):
+                self.progress.emit('Batch #' + str(batch) + '\n' + result)
+            else:
+                self.parent.buffer.append( result[0][0] )
+                self.progress.emit('Batch #' + str(batch) + '\n' + result[1])
+
+        self.finished.emit()
 
 class SpectrumPlot(QWidget):
     channelOptions = [
@@ -59,11 +129,12 @@ class SpectrumPlot(QWidget):
         'triang',
         'tukey']
 
+    interrupt = pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__()
 
         self.parent = parent
-        self.interrupt = False
         self.buffer = []
         self.initUI()
 
@@ -157,9 +228,22 @@ class SpectrumPlot(QWidget):
         self.setWindowTitle('Spectrum Plot')
         self.setGeometry(100, 100, 1280, 720)
 
-    def stopClick(self):
-        self.interrupt = True
-        self.setEnableSetings(True)
+    def setEnableSettings(self, enabled):
+        self.comboBoxChannelMenu.setEnabled(enabled)
+        self.lineEditCalibration.setEnabled(enabled)
+        self.lineEditTimebase.setEnabled(enabled)
+        self.lineEditAveraging.setEnabled(enabled)
+        self.comboBoxWindow.setEnabled(enabled)
+        self.comboBoxScaling.setEnabled(enabled)
+
+    def print(self, *text):
+        for t in text:
+            self.textEditConsole.insertPlainText(str(t)+' ')
+        self.textEditConsole.insertPlainText('\n')
+
+    @pyqtSlot(str)
+    def dataProgress(self, report):
+        self.print('\n'+report)
 
     def startClick(self):
         self.interrupt = False
@@ -174,56 +258,32 @@ class SpectrumPlot(QWidget):
         window = self.comboBoxWindow.currentText()
         scaling = self.comboBoxScaling.currentText()
 
-        getDataThread = Thread(target=self.getData, args=(channel, duration_dt))
-        getDataThread.start()
-        plotSpecThread = Thread(target=self.plotSpec, args=(calibration, averaging, window, scaling))
-        plotSpecThread.start()
+        self.dataWorker = GetDataWorker(self, channel, duration_dt)
+        self.dataThread = QThread()
+        self.dataWorker.moveToThread(self.dataThread)
+        self.dataThread.started.connect(self.dataWorker.run)
+        self.dataWorker.finished.connect(self.dataThread.quit)
+        self.dataWorker.finished.connect(self.dataWorker.deleteLater)
+        self.dataThread.finished.connect(self.dataThread.deleteLater)
+        self.dataWorker.progress.connect(self.dataProgress)
 
-    def setEnableSettings(self, enabled):
-        self.comboBoxChannelMenu.setEnabled(enabled)
-        self.lineEditCalibration.setEnabled(enabled)
-        self.lineEditTimebase.setEnabled(enabled)
-        self.lineEditAveraging.setEnabled(enabled)
-        self.comboBoxWindow.setEnabled(enabled)
-        self.comboBoxScaling.setEnabled(enabled)
+        self.plotWorker = SpectrumPlotWorker(self, calibration, averaging, window, scaling)
+        self.plotThread = QThread()
+        self.plotWorker.moveToThread(self.plotThread)
+        self.plotThread.started.connect(self.plotWorker.run)
+        self.plotWorker.finished.connect(self.plotThread.quit)
+        self.plotWorker.finished.connect(self.plotWorker.deleteLater)
+        self.plotThread.finished.connect(self.plotThread.deleteLater)
 
-    def getData(self, channel, duration_dt):
-        batch = 0
-        while not self.interrupt:
-            batch += 1
+        self.dataThread.start()
+        self.plotThread.start()
+        self.setEnableSettings(False)
 
-            stop_dt = datetime.now()
-            start_dt = stop_dt - duration_dt
-            start = start_dt.strftime('%Y-%m-%dT%H:%M:%S')
-            stop = stop_dt.strftime('%Y-%m-%dT%H:%M:%S')
+        self.dataThread.finished.connect(lambda : self.setEnableSettings(True))
 
-            result = get_doocs_data([channel], start, stop)
-            if isinstance(result, str):
-                self.stopClick()
-                self.textEditConsole.setText(result+'\nPlotting stopped.')
-            else:
-                self.buffer.append( result[0][0] )
-                self.textEditConsole.setText('Batch: ' + str(batch) + '\n' + result[1])
+    def stopClick(self):
+        self.interrupt.emit()
 
-    def plotSpec(self, calibration, averaging, window, scaling):
-        batch = 0
-        while not self.interrupt:
-            batch += 1
-            if len(self.buffer) > 1:
-                calibrated_data = self.buffer[0] * calibration
-                self.buffer.pop(0)
-
-                freqs, spec = signal.welch(calibrated_data, 16000, window=window, scaling=scaling,
-                                                 nperseg=len(calibrated_data)/averaging)
-
-                self.plotWidget.clear()
-                self.plotWidget.setLabel('top', )
-                curve1 = self.plotWidget.plot()
-                curve1.setPen(color=(0,33,165))    # UF blue
-                curve1.setData(freqs, spec)
-                pg.Qt.QtGui.QApplication.processEvents()
-            else:
-                time.sleep(0.1)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
