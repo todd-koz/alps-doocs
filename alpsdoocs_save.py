@@ -2,6 +2,7 @@ from PyQt5.QtWidgets import (QWidget, QLabel, QLineEdit,
     QTextEdit, QPushButton, QCheckBox, QComboBox,
     QApplication, QHBoxLayout, QVBoxLayout,
     QFileDialog, QMessageBox)
+from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 from PyQt5 import QtGui
 
 import sys
@@ -25,6 +26,45 @@ class ChannelError(ConfigError):
     """No channels selected or a file name is missing."""
     pass
 
+class SaveMatWorker(QObject):
+    finished = pyqtSignal()
+    report = pyqtSignal(str)
+
+    def __init__(self, channels, filenames, start, stop, decimationFactor):
+        super().__init__()
+        self.channels = channels
+        self.filenames = filenames
+        self.start = start
+        self.stop = stop
+        self.decimationFactor = decimationFactor
+        self.interrupt = False
+
+    @pyqtSlot()
+    def interruptListen(self):
+        self.interrupt = True
+
+    def run(self):
+        with ExitStack() as stack:
+            files = [stack.enter_context(open(fname, 'wb')) for fname in self.filenames]
+            mat_writers = []
+
+            for i in range(len(files)):
+                mat_writers.append( MatWriter(files[i]) )
+                mat_writers[i].write_preamble()
+
+            result = get_doocs_data_continuous(self.channels, save_mat_subroutine,
+                                            self.start, self.stop,
+                                            sub_args=(self.channels, mat_writers, self.decimationFactor),
+                                            interrupt=lambda : self.interrupt)
+
+            for i in range(len(mat_writers)):
+                mat_writers[i].update_tags()
+
+        if 'Trace' in result or 'Exception' in result or 'Error' in result:
+            for f in self.filenames: os.remove(f)
+
+        self.report.emit(res)
+        self.finished.emit()
 
 class ChannelSelect(QWidget):
     channelOptions = [
@@ -131,10 +171,11 @@ class SaveApp(QWidget):
         "64 Hz": 64,
         "32 Hz": 32 }
 
+    interrupt = pyqtSignal()
+
     def __init__(self):
         super().__init__()
 
-        self.interrupt = False
         self.channels = []
         self.filenames = []
         self.windowChannelSelect = None
@@ -311,6 +352,7 @@ class SaveApp(QWidget):
         duration = duration_dt.seconds
 
         stop_dt = (start_dt + duration_dt)
+        stop = stop_dt.strftime('%Y-%m-%dT%H:%M:%S')
 
         return start, stop, duration, stop_dt
 
@@ -350,8 +392,6 @@ class SaveApp(QWidget):
         return writeoversize
 
     def startSave(self):
-        self.interrupt = False
-
         start, stop, duration, stop_dt = self.getTimes()
 
         try:
@@ -377,7 +417,7 @@ class SaveApp(QWidget):
         filesize = self.decimationVal[sampleRate] * 8 * duration * len(channels)
         if not self.oversizeCheck(filesize): return
 
-        comments = self.textEditComments.text()
+        comments = self.textEditComments.toPlainText()
 
         self.print('Directory:', directory)
         self.print('Start:', start)
@@ -393,8 +433,19 @@ class SaveApp(QWidget):
             self.print(fname)
 
         if ftype=='.mat':
-            savemat_thread = Thread(target=self.saveMat, args=(channels, filenames, start, stop, decimationFactor))
-            savemat_thread.start()
+            self.saveMatThread = QThread()
+            self.saveMatWorker = SaveMatWorker(channels, filenames, start, stop, decimationFactor)
+            self.saveMatWorker.moveToThread(self.saveMatThread)
+            self.saveMatThread.started.connect(self.saveMatWorker.run)
+            self.saveMatWorker.finished.connect(self.saveMatThread.quit)
+            self.saveMatWorker.finished.connect(self.saveMatWorker.deleteLater)
+            self.saveMatThread.finished.connect(self.saveMatThread.deleteLater)
+            self.saveMatWorker.report.connect(self.saveWorkerReport)
+            self.interrupt.connect(self.saveMatWorker.interruptListen)
+
+            self.saveMatThread.start()
+            self.buttonStartSave.setEnabled(False)
+            self.saveMatThread.finished.connect(lambda : self.buttonStartSave.setEnabled(True))
         else:
             self.print_error('File type not yet implemented.')
             return
@@ -403,27 +454,12 @@ class SaveApp(QWidget):
             with open(directory+'/'+'comments.txt', 'w') as f:
                 f.write(comments)
 
-    def saveMat(self, channels, filenames, start, stop):
-        with ExitStack() as stack:
-            files = [stack.enter_context(open(fname, 'wb')) for fname in filenames]
-            mat_writers = []
-
-            for i in range(len(files)):
-                mat_writers.append( MatWriter(files[i]) )
-                mat_writers[i].write_preamble()
-
-            res = get_doocs_data_continuous(channels, save_mat_subroutine,
-                                            start, stop,
-                                            sub_args=(channels, mat_writers, decimationFactor),
-                                            interrupt=lambda : self.interrupt)
-
-            for i in range(len(mat_writers)):
-                mat_writers[i].update_tags()
-
-        self.print(res)
+    @pyqtSlot(str)
+    def saveWorkerReport(self, report):
+        self.print('\n'+report)
 
     def interruptSave(self):
-        self.interrupt = True
+        self.interrupt.emit()
 
 
 if __name__ == '__main__':
