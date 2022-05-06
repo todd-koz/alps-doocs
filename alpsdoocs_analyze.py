@@ -26,21 +26,23 @@ class SpectrumPlotWorker(QObject):
         self.averaging = averaging
         self.window = window
         self.scaling = scaling
+        self.interrupt = False
+        self.parent.interrupt.connect(self.interruptHeard)
 
     @pyqtSlot()
-    def interruptListen(self):
+    def interruptHeard(self):
         self.interrupt = True
 
     def run(self):
         batch = 0
         while not self.interrupt:
-            batch += 1
-            if len(self.buffer) > 0:
-                calibrated_data = self.parent.buffer[0] * calibration
+            if len(self.parent.buffer) > 0:
+                batch += 1
+                calibrated_data = self.parent.buffer[0] * self.calibration
                 self.parent.buffer.pop(0)
 
-                freqs, spec = signal.welch(calibrated_data, 16000, window=window, scaling=scaling,
-                                                 nperseg=len(calibrated_data)/averaging)
+                freqs, spec = signal.welch(calibrated_data, 16000, window=self.window, scaling=self.scaling,
+                                           nperseg=len(calibrated_data)/self.averaging)
 
                 self.parent.plotWidget.clear()
                 self.parent.plotWidget.setLabel('top', f'Power Spectrum - batch {batch}')
@@ -62,9 +64,11 @@ class GetDataWorker(QObject):
         self.parent = parent
         self.channel = channel
         self.duration_dt = duration_dt
+        self.interrupt = False
+        self.parent.interrupt.connect(self.interruptHeard)
 
     @pyqtSlot()
-    def interruptListen(self):
+    def interruptHeard(self):
         self.interrupt = True
 
     def run(self):
