@@ -63,7 +63,7 @@ class SaveMatWorker(QObject):
         if 'Trace' in result or 'Exception' in result or 'Error' in result:
             for f in self.filenames: os.remove(f)
 
-        self.report.emit(res)
+        self.report.emit(result)
         self.finished.emit()
 
 class ChannelSelect(QWidget):
@@ -446,12 +446,13 @@ class SaveApp(QWidget):
             self.saveMatThread.start()
             self.buttonStartSave.setEnabled(False)
             self.saveMatThread.finished.connect(lambda : self.buttonStartSave.setEnabled(True))
+            self.saveMatThread.finished.connect(lambda: self.print("Finished!"))
         else:
             self.print_error('File type not yet implemented.')
             return
 
         if not comments=='':
-            with open(directory+'/'+'comments.txt', 'w') as f:
+            with open(directory+'/comments.txt', 'w') as f:
                 f.write(comments)
 
     @pyqtSlot(str)
