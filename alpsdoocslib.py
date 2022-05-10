@@ -34,8 +34,7 @@ def unsigned_to_signed(number, maxbits):
 def get_doocs_data(DOOCS_addresses, start, stop,
                    daq="/daq_data/alps",server="ALPS.DAQ/DAQ.SERVER1/DAQ.DATA.SVR/"): 
     try:
-        # for NAF environment on NAF cluster
-        err = pydaq.connect(start=start, stop=stop, ddir=daq, exp='alps', chans=DOOCS_addresses, daqservers=server)
+        err = pydaq.connect(start=start, stop=stop, ddir=daq, exp='alps', chans=DOOCS_addresses, daqservers=server, local=True)
             
     except pydaq.PyDaqException:
         return format_exc()
@@ -91,7 +90,7 @@ def get_doocs_data(DOOCS_addresses, start, stop,
 
         summary += f"Total events: {total}, emptycount: {emptycount}\n"
         for stats in stats_list:
-            summary += stats['daqname'] + ':\t' + stats['events'] + 'events'
+            summary += stats['daqname'] + ':\t' + str(stats['events']) + ' events\n'
 
         pydaq.disconnect()
         return chan_all, summary
@@ -120,8 +119,7 @@ def get_doocs_data_continuous(DOOCS_addresses, subroutine, start, stop,
                               server="ALPS.DAQ/DAQ.SERVER1/DAQ.DATA.SVR/"):
 
     try:
-        # for NAF environment on NAF cluster
-        err = pydaq.connect(start=start, stop=stop, ddir=daq, exp='alps', chans=DOOCS_addresses, daqservers=server)
+        err = pydaq.connect(start=start, stop=stop, ddir=daq, exp='alps', chans=DOOCS_addresses, daqservers=server, local=True)
 
     except pydaq.PyDaqException:
         return format_exc()
@@ -184,7 +182,7 @@ def get_doocs_data_continuous(DOOCS_addresses, subroutine, start, stop,
 
         summary += f"Total events: {total}, emptycount: {emptycount}\n"
         for stats in stats_list:
-            summary += stats['daqname'] + ':\t' + stats['events'] + 'events'
+            summary += stats['daqname'] + ':\t' + str(stats['events']) + ' events\n'
 
         pydaq.disconnect()
         return summary
@@ -435,10 +433,11 @@ def signal_process(data,fs=16000,t0=0,process="None",filtertype="None",filterfre
 ################ miscellaneous utility functions ################
 
 def downsample(arr, factor):
+    factor = int(factor)
     #### scipy's advice to run decimate multiple times if factor is big
     while factor > 8:
-        decimated_data = signal.decimate(decimated_data, 8)
+        arr = signal.decimate(arr, 8)
         factor = factor // 8
     if factor > 1:
-        decimated_data = signal.decimate(decimated_data, factor)
-    return decimated_data
+        arr = signal.decimate(arr, factor)
+    return arr
