@@ -37,12 +37,20 @@ class PlotWorker(QObject):
     def run(self):
         batch = 0
         while not self.parent.interrupt:
+            data = np.array([])
             batch += 1
-            calls = 32 * self.duration
+            goal = 32 * self.duration
+            cycles = 0
+            pulse = 0
             try:
-                data = pydoocs.read(self.channel)['data'][:,1]
-                for i in range(1,calls):
-                    data = np.concatenate((data, pydoocs.read(self.channel+'/CH00.TD')['data'][:,1]))
+                while cycles<goal:
+                    output = pydoocs.read(self.channel)
+                    if output['macropulse'] == pulse:
+                        continue
+                    else:
+                        cycles += 1
+                        pulse = output['macropulse']
+                        data = np.concatenate((data, out['data'][:,1]))
 
                 calibrated_data = data * self.calibration
                 freqs, ps = signal.welch(calibrated_data, 16000,
