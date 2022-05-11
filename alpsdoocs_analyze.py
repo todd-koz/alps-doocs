@@ -36,21 +36,23 @@ class PlotWorker(QObject):
 
     def run(self):
         batch = 0
+        goal = int(self.duration * 32)
         while not self.parent.interrupt:
-            data = np.array([])
+            data = []
             batch += 1
-            goal = 32 * self.duration
             cycles = 0
             pulse = 0
             try:
-                while cycles<goal:
+                while cycles < goal:
                     output = pydoocs.read(self.channel)
                     if output['macropulse'] == pulse:
                         continue
                     else:
                         cycles += 1
                         pulse = output['macropulse']
-                        data = np.concatenate((data, out['data'][:,1]))
+                        data.append( output['data'][:,1] )
+
+                data = np.reshape(data, (500*goal,))
 
                 calibrated_data = data * self.calibration
                 freqs, ps = signal.welch(calibrated_data, 16000,
@@ -235,7 +237,7 @@ class SpectrumPlot(QWidget):
 
         channel = self.baseAdr + self.comboBoxChannelMenu.currentText() + '/CH00.TD'
         averaging = int(self.lineEditAveraging.text())
-        timebase = int(self.lineEditTimebase.text())
+        timebase = float(self.lineEditTimebase.text())
 
         calibration = float(self.lineEditCalibration.text())
         window = self.comboBoxWindow.currentText()
