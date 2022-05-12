@@ -9,17 +9,18 @@ import pyqtgraph as pg
 import sys
 import time
 from datetime import datetime, timedelta
+from traceback import format_exc
 
 from scipy import signal
 import numpy as np
 
-from alpsdoocslib import get_doocs_data
+import pydoocs
 
 pg.setConfigOption('background', 'w') # Standard (white)
 
 class PlotWorker(QObject):
     finished = pyqtSignal()
-    progress = pyqtSignal(str, int)
+    progress = pyqtSignal(str)
     plotsignal = pyqtSignal(list)
 
     def __init__(self, parent, channel, duration, calibration, averaging, window, scaling):
@@ -35,23 +36,40 @@ class PlotWorker(QObject):
 
     def run(self):
         batch = 0
+        goal = int(self.duration * 32)
         while not self.parent.interrupt:
+            data = []
             batch += 1
-            stop_dt = datetime.now - timedelta(seconds=180)
-            start_dt = stop_dt - timedelta(seconds=self.duration)
-            start = start_dt.strftime("%Y-%m-%dT%H:%M:%S")
-            stop = stop_dt.strftime("%Y-%m-%dT%H:%M:%S")
-            
-            result = get_doocs_data([self.channel], start, stop)
-            if isinstance(result, str):
-                self.progress.emit(result[1], batch)
-            else:
-                calibrated_data = result[0][0] * self.calibration
+            cycles = 1
+            try:
+                output = pydoocs.read(self.channel)
+                pulse_initial = output['macropulse']
+                pulse = pulse_initial
+                data.append(output['data'][:,1])
+
+                while cycles < goal:
+                    output = pydoocs.read(self.channel)
+                    if output['macropulse'] == pulse:
+                        continue
+                    else:
+                        cycles += 1
+                        pulse = output['macropulse']
+                        data.append( output['data'][:,1] )
+
+                data = np.reshape(data, (500*goal,))
+
+                calibrated_data = data * self.calibration
+
                 freqs, ps = signal.welch(calibrated_data, 16000,
                                          window=self.window, scaling=self.scaling,
                                          nperseg=len(calibrated_data)/self.averaging)
 
                 self.plotsignal.emit([batch,freqs,ps])
+                self.progress.emit(f"Batch #{batch}\nMacropulse span: {pulse-pulse_initial}")
+
+            except:
+                summary = format_exc()
+                self.progress.emit(f"Batch #{batch}\n"+summary)
 
         self.finished.emit()
 
@@ -212,9 +230,9 @@ class SpectrumPlot(QWidget):
         for t in text:
             self.textEditConsole.insertPlainText(str(t)+' ')
 
-    @pyqtSlot(str,int)
-    def dataProgress(self, report, batchNum):
-        self.print(f"\nBatch: #{batchNum}\n"+report)
+    @pyqtSlot(str)
+    def dataProgress(self, report):
+        self.print(report)
 
     def stopClick(self):
         self.interrupt = True
@@ -223,9 +241,9 @@ class SpectrumPlot(QWidget):
         self.interrupt = False
         self.setEnableSettings(False)
 
-        channel = self.baseAdr + self.comboBoxChannelMenu.currentText()
+        channel = self.baseAdr + self.comboBoxChannelMenu.currentText() + '/CH00.TD'
         averaging = int(self.lineEditAveraging.text())
-        timebase = int(self.lineEditTimebase.text())
+        timebase = float(self.lineEditTimebase.text())
 
         calibration = float(self.lineEditCalibration.text())
         window = self.comboBoxWindow.currentText()

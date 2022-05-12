@@ -43,7 +43,7 @@ def get_doocs_data(DOOCS_addresses, start, stop,
         emptycount = 0
         total = 0
         stats_list = []
-        chan_all = [np.array([]) for ch in DOOCS_addresses]
+        chan_all = [[] for ch in DOOCS_addresses]
         summary = ''
 
         while (emptycount < 1000000):
@@ -82,11 +82,14 @@ def get_doocs_data(DOOCS_addresses, start, stop,
                         i = i+1
 
                     which = DOOCS_addresses.index(daqname)
-                    chan_all[which] = np.concatenate((chan_all[which],data_array_int))
+                    chan_all[which].append(data_array_int)
 
             except Exception as err:
                 summary += format_exc() + '\n'
                 break
+
+        for i in range(len(chan_all)):
+            chan_all[i] = np.ravel(chan_all[i])
 
         summary += f"Total events: {total}, emptycount: {emptycount}\n"
         for stats in stats_list:
