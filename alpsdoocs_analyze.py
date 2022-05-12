@@ -59,6 +59,7 @@ class PlotWorker(QObject):
                 data = np.reshape(data, (500*goal,))
 
                 calibrated_data = data * self.calibration
+
                 freqs, ps = signal.welch(calibrated_data, 16000,
                                          window=self.window, scaling=self.scaling,
                                          nperseg=len(calibrated_data)/self.averaging)
