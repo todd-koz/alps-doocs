@@ -20,7 +20,7 @@ pg.setConfigOption('background', 'w') # Standard (white)
 
 class PlotWorker(QObject):
     finished = pyqtSignal()
-    progress = pyqtSignal(str, int)
+    progress = pyqtSignal(str)
     plotsignal = pyqtSignal(list)
 
     def __init__(self, parent, channel, duration, calibration, averaging, window, scaling):
@@ -40,9 +40,13 @@ class PlotWorker(QObject):
         while not self.parent.interrupt:
             data = []
             batch += 1
-            cycles = 0
-            pulse = 0
+            cycles = 1
             try:
+                output = pydoocs.read(self.channel)
+                pulse_initial = output['macropulse']
+                pulse = pulse_initial
+                data.append(output['data'][:,1])
+
                 while cycles < goal:
                     output = pydoocs.read(self.channel)
                     if output['macropulse'] == pulse:
@@ -60,10 +64,11 @@ class PlotWorker(QObject):
                                          nperseg=len(calibrated_data)/self.averaging)
 
                 self.plotsignal.emit([batch,freqs,ps])
+                self.progress.emit(f"Batch #{batch}\nMacropulse span: {pulse-pulse_initial}")
 
             except:
                 summary = format_exc()
-                self.progress.emit(summary, batch)
+                self.progress.emit(f"Batch #{batch}\n"+summary)
 
         self.finished.emit()
 
@@ -224,9 +229,9 @@ class SpectrumPlot(QWidget):
         for t in text:
             self.textEditConsole.insertPlainText(str(t)+' ')
 
-    @pyqtSlot(str,int)
-    def dataProgress(self, report, batchNum):
-        self.print(f"\nBatch: #{batchNum}\n"+report)
+    @pyqtSlot(str)
+    def dataProgress(self, report):
+        self.print(report)
 
     def stopClick(self):
         self.interrupt = True
