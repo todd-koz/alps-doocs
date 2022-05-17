@@ -13,16 +13,7 @@ from traceback import format_exc
 from scipy import signal
 import numpy as np
 
-############################### get_doocs_data ####################################
-### This function, adapted from a script written by Sven Karstensen, communicates
-### with the DOOCS DAQ server via the function "pydaq.connect" and pulls the data
-### via the function "pydaq.getdata()". The data retrieved via this command has a
-### dictionary structure with 500 data points contained in channels[0]['data']
-### This modified script appends multiple instances of the getdata() output to
-### generate a large, continuous data file containing all the data for each channel
-### for the time duration specified. unisgned_to_signed is necessary to adapt the 
-### DAQ output from unsigned integers to signed integers.
-###################################################################################
+
 def unsigned_to_signed(number, maxbits):
     maxn = 2<<(maxbits - 1)
     middle = 2<<(maxbits - 1) - 1
@@ -32,7 +23,18 @@ def unsigned_to_signed(number, maxbits):
         return number - maxn
 
 def get_doocs_data(DOOCS_addresses, start, stop,
-                   daq="/daq_data/alps",server="ALPS.DAQ/DAQ.SERVER1/DAQ.DATA.SVR/"): 
+                   daq="/daq_data/alps", server="ALPS.DAQ/DAQ.SERVER1/DAQ.DATA.SVR/"): 
+    """
+    This function, adapted from a script written by Sven Karstensen, communicates
+    with the DOOCS DAQ server via the function "pydaq.connect" and pulls the data
+    via the function "pydaq.getdata()". The data retrieved via this command has a
+    dictionary structure with 500 data points contained in channels[0]['data']
+    This modified script appends multiple instances of the getdata() output to
+    generate a large, continuous data file containing all the data for each channel
+    for the time duration specified. unisgned_to_signed is necessary to adapt the 
+    DAQ output from unsigned integers to signed integers.
+    """
+
     try:
         err = pydaq.connect(start=start, stop=stop, ddir=daq, exp='alps', chans=DOOCS_addresses, daqservers=server, local=True)
             
@@ -98,28 +100,28 @@ def get_doocs_data(DOOCS_addresses, start, stop,
         pydaq.disconnect()
         return chan_all, summary
 
-########################## get_doocs_data_continuous ##############################
-### This function is adapted from a script by Sven Karstensen that communicates
-### with the DAQ server via "pydaq.connect()" and pulls data via "pydaq.getdata()".
-### This version turns the script into a wrapper for any process that acts on the
-### batch of data obtained immediately after each call to "pydaq.getdata()".
-###
-### This is achieved by accepting another function as one of its arguments called
-### "subroutine". If the subroutine requires its own arguments, they can be passed
-### as a tuple to an argument of this function called "sub_args". When defining a
-### subroutine, it must expect at least 1 argument: a list of dictionaries, each
-### with keys 'data', 'daqname', 'macropulse', 'timestamp'.
-###
-### Finally, this function allows data-processing to be interrupted. It accepts an
-### argument called "interrupt", which is any function that returns True/False. By
-### default, it is a function that always returns False, which never interrupts.
-###################################################################################
 
 def get_doocs_data_continuous(DOOCS_addresses, subroutine, start, stop,
                               sub_args=None,
                               interrupt=lambda : False,
                               daq="/daq_data/alps",
                               server="ALPS.DAQ/DAQ.SERVER1/DAQ.DATA.SVR/"):
+    """
+    This function is adapted from a script by Sven Karstensen that communicates
+    with the DAQ server via "pydaq.connect()" and pulls data via "pydaq.getdata()".
+    This version turns the script into a wrapper for any process that acts on the
+    batch of data obtained immediately after each call to "pydaq.getdata()".
+   
+    This is achieved by accepting another function as one of its arguments called
+    "subroutine". If the subroutine requires its own arguments, they can be passed
+    as a tuple to an argument of this function called "sub_args". When defining a
+    subroutine, it must expect at least 1 argument: a list of dictionaries, each
+    with keys 'data', 'daqname', 'macropulse', 'timestamp'.
+   
+    Finally, this function allows data-processing to be interrupted. It accepts an
+    argument called "interrupt", which is any function that returns True/False. By
+    default, it is a function that always returns False, which never interrupts.
+    """
 
     try:
         err = pydaq.connect(start=start, stop=stop, ddir=daq, exp='alps', chans=DOOCS_addresses, daqservers=server, local=True)
@@ -190,18 +192,19 @@ def get_doocs_data_continuous(DOOCS_addresses, subroutine, start, stop,
         pydaq.disconnect()
         return summary
 
-################################### MatWriter ###################################
-### This class is a custom file-writing handler for .mat files, an alternative to
-### scipy's "savemat" function. Scipy's function and the .mat format is not well-
-### suited for writing multiple channels of data continuously. As of the current
-### version, this class introduces the functionality of saving data continuously
-### at the cost of only one channel per file. Thus, every channel of data should
-### be saved in its own file when using this class. The variable name in the file
-### is fixed as "data". When loading multiple files in MATLAB, one should assign
-### each array a new variable name to distinguish between them.
-################################################################################
 
 class MatWriter():
+    """
+    This class is a custom file-writing handler for .mat files, an alternative to
+    scipy's "savemat" function. Scipy's function and the .mat format is not well-
+    suited for writing multiple channels of data continuously. As of the current
+    version, this class introduces the functionality of saving data continuously
+    at the cost of only one channel per file. Thus, every channel of data should
+    be saved in its own file when using this class. The variable name in the file
+    is fixed as "data". When loading multiple files in MATLAB, one should assign
+    each array a new variable name to distinguish between them.
+    """
+
     def __init__(self, file, header='MATLAB File'):
         self.file = file
         header = header.strip()
@@ -277,9 +280,8 @@ class MatWriter():
         self.file.close()
 
 @contextmanager
-def open_mat_context(path, header):
-    f = open(path, 'wb')
-    mat_writer = MatWriter(f, header)
+def open_mat(path, header=''):
+    mat_writer = MatWriter(open(path, 'wb'), header)
     mat_writer.write_preamble()
     try:
         yield mat_writer
@@ -287,7 +289,7 @@ def open_mat_context(path, header):
         mat_writer.update_tags()
         mat_writer.close()
 
-####################### EXAMPLE #######################
+############################## EXAMPLE ##############################
 ### using "get_doocs_data_continuous()" and MatWriter()
 
 ### define the subroutine
@@ -324,30 +326,13 @@ def save_mat_custom(channels, filepaths, start, stop,
             mat_writers[i].update_tags()
 
     return result
-
-#########################################################################
-### The following code uses the pydoocs.read() function to save data from
-### DOOCS channels to CSV files. These DOOCS channels are ones not on a
-### DAQ server. It is assumed that they have an associated channel with
-### the same address but suffixed by ".HIST" and that the sampling rates
-### are slow.
-
-### Reading a ".HIST" address returns a dict with an item labeled "data",
-### which is a list of tuples of the form (timestamp, data, macropulse).
-### The length of the list is fixed and past data is no longer available
-### after some time. Thus the following code only records data starting
-### at the time of call. If saving multiple channels of data, the tasks
-### must be run in parallel to reduce the risk of data from one channel
-### being removed while data from another channel is being logged. Thus,
-### the tasks are handled by ThreadPoolExecutor from the python module
-### "concurrent.futures".
-
-### The difference in time between each timestamp can vary. Thus, both
-### the timestamps and data are recorded. Each row of the file is a time-
-### data pair, separated by a comma.
-#########################################################################
+############################ END EXAMPLE ############################
 
 def remove_overlap_timestamp(past_data, new_data):
+    """
+    Removes data points from `new_data` with the same timestamp as those in `past_data`.
+    """
+
     latest_timestamp = past_data[-1,0]
     new_timestamps = new_data[:,0]
 
@@ -358,9 +343,14 @@ def remove_overlap_timestamp(past_data, new_data):
             break
         else:
             new_start_pos -= 1
+
     return new_data[new_start_pos:,:]
 
 def pydoocs_save_csv(channel, filepath, duration):
+    """
+    Saves time-stamped data to CSV live from a DOOCS channel not on a DAQ server.
+    """
+
     hist = np.array(pydoocs.read(channel+'.HIST')['data'])[:,:2]
     past = np.zeros(hist.shape)
     t0 = hist[0,0]
@@ -386,6 +376,28 @@ def pydoocs_save_csv(channel, filepath, duration):
     return t0, hist[-1,0]
 
 def pydoocs_save_csv_multiple(channels, filepaths, duration):
+    """
+    The following code uses the pydoocs.read() function to save data from
+    DOOCS channels to CSV files. These DOOCS channels are ones not on a
+    DAQ server. It is assumed that they have an associated channel with
+    the same address but suffixed by ".HIST" and that the sampling rates
+    are slow.
+
+    Reading a ".HIST" address returns a dict with an item labeled "data",
+    which is a list of tuples of the form (timestamp, data, macropulse).
+    The length of the list is fixed and past data is no longer available
+    after some time. Thus the following code only records data starting
+    at the time of call. When saving from multiple channels, the tasks
+    must be run in parallel to reduce the risk of data from one channel
+    being removed while data from another channel is being logged. Thus,
+    the tasks are handled by ThreadPoolExecutor from the python module
+    "concurrent.futures".
+
+    The difference in time between each timestamp can vary. Thus, both
+    the timestamps and data are recorded. Each row of the file is a time-
+    data pair, separated by a comma.
+    """
+
     nch = len(channels)
     executor = ThreadPoolExecutor(max_workers=nch)
     tasks = [executor.submit(pydoocs_save_csv,
@@ -406,13 +418,14 @@ def pydoocs_save_csv_multiple(channels, filepaths, duration):
             else: continue
     return result
 
-########################## signal_process #####################################
-### Uses the GWpy library of signal processing tools to filter and analyze data
-### by converting to a TimeSeries object, then subjecting it to GWpy function to
-### filter or generate FrequencySeries objects. Returns raw data for plotting.
-###############################################################################
 
 def signal_process(data,fs=16000,t0=0,process="None",filtertype="None",filterfreq=0,flow=0,fhigh=0,zeros=[],poles=[],gain=0):
+    """
+    Uses the GWpy library of signal processing tools to filter and analyze data 
+    by converting to a TimeSeries object, then subjecting it to GWpy function to 
+    filter or generate FrequencySeries objects. Returns raw data for plotting.
+    """
+
     myTS = TimeSeries(data=data[0])
     if filtertype=="lowpass":
         myTS = myTS.lowpass(frequency=filterfreq)
@@ -433,14 +446,28 @@ def signal_process(data,fs=16000,t0=0,process="None",filtertype="None",filterfre
         myPSD = myTS.psd(fftlength,overlap,window,method)
         return myPSD
 
-################ miscellaneous utility functions ################
+########## MISCELLANEOUS UTILITY FUNCTIONS AND CONSTANTS ##########
 
 def downsample(arr, factor):
-    factor = int(factor)
-    #### scipy's advice to run decimate multiple times if factor is big
-    while factor > 8:
-        arr = signal.decimate(arr, 8)
-        factor = factor // 8
+    """Custom decimation function, heeding Scipy's advice to run multiple times if factor is bigger than 13"""
+
+    if factor > 13:
+        arr = signal.decimate(arr, 4)
+        factor = factor // 4
     if factor > 1:
         arr = signal.decimate(arr, factor)
     return arr
+
+BASE_ADDRESS = "ALPS.DIAG/ALPS.ADC."
+
+NR_ADDRESSES = [f"NR/CH_1.{i:02d}" for i in range(32)]
+NL_ADDRESSES = [f"NL/CH_1.{i:02d}" for i in range(32)]
+HN_ADDRESSES = [f"HN/CH_1.{i:02d}" for i in range(32)]
+
+DECIMATION_VALUES = {
+    "16 kHz": 16000,
+    "8 kHz": 8000,
+    "4 kHz": 4000,
+    "2 kHz": 2000,
+    "1 kHz": 1000,
+    "500 Hz": 500 }
