@@ -178,6 +178,7 @@ class SpectrumPlot(QWidget):
         self.buttonStart.clicked.connect(self.startClick)
         self.buttonStop = QPushButton('Stop Plot', self)
         self.buttonStop.clicked.connect(self.stopClick)
+        self.buttonStop.setEnabled(False)
 
         self.textEditConsole = QTextEdit(self)
         self.textEditConsole.setReadOnly(True)
@@ -226,6 +227,8 @@ class SpectrumPlot(QWidget):
         self.setGeometry(100, 100, 1280, 720)
 
     def setEnableSettings(self, enabled):
+        self.buttonStop.setEnabled(not enabled)
+        self.buttonStart.setEnabled(enabled)
         self.comboBoxChannelMenu.setEnabled(enabled)
         self.lineEditCalibration.setEnabled(enabled)
         self.lineEditTimebase.setEnabled(enabled)
