@@ -13,7 +13,8 @@ from datetime import datetime, timedelta
 from threading import Thread
 from contextlib import ExitStack
 
-from alpsdoocslib import MatWriter, get_doocs_data_continuous, save_mat_subroutine
+from alpsdoocslib import (MatWriter, get_doocs_data_continuous, save_mat_subroutine,
+                          DECIMATION_VALUES, BASE_ADDRESS, NR_ADDRESSES, NL_ADDRESSES, HN_ADDRESSES)
 
 class ConfigError(Exception):
     pass
@@ -158,18 +159,8 @@ class ChannelSelect(QWidget):
 
 class SaveApp(QWidget):
     filetypeOptions = ['.mat', '.csv' ]
-    baseAdr = 'ALPS.DIAG/ALPS.ADC.'
-
-    decimationVal = {
-        "16 kHz": 16000,
-        "8 kHz": 8000,
-        "4 kHz": 4000,
-        "2 kHz": 2000,
-        "1 kHz": 1000,
-        "500 Hz": 500,
-        "100 Hz": 100,
-        "64 Hz": 64,
-        "32 Hz": 32 }
+    baseAdr = BASE_ADDRESS
+    decimationVal = DECIMATION_VALUES
 
     interrupt = pyqtSignal()
 
