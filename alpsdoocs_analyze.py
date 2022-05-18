@@ -2,7 +2,7 @@ from PyQt5.QtWidgets import (QWidget, QLabel, QLineEdit,
     QTextEdit, QPushButton, QCheckBox, QComboBox,
     QApplication, QHBoxLayout, QVBoxLayout,
     QFileDialog, QMessageBox)
-from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
+from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot, QTimer
 from PyQt5 import QtGui
 import pyqtgraph as pg
 
@@ -17,6 +17,37 @@ import numpy as np
 
 import pydoocs
 
+UNITS_TIP = """\
+(Optional)
+Sets units to display on plot's y-axis label.
+If blank, none will display.\
+"""
+
+FREQ_RES_TIP = """\
+Must be no greater than 32 Hz.
+
+Upon each request for data, DOOCS sends 500 samples
+corresponding to the latest 'macropulse' event. Thus,
+the total measurement time for a spectrum must be an
+integer multiple of 500 samples, or 0.03125 seconds.
+Equivalently, the requested frequency resolution will
+be discretized to (32/N) Hz, for some integer N >= 1.\
+"""
+
+AVERAGING_TIP = """\
+The measurement time set by the frequency resolution
+above will be multiplied by the averaging. The length
+of a segment of data for a single spectrum is the
+total length divided by the averaging. No overlap
+between segments is used.\
+"""
+
+UPDATE_TIME_TIP = """\
+Time between the display of the next spectrum plot.
+Requesting update times significantly below 1 second
+is not guaranteed to be fulfilled.\
+"""
+
 pg.setConfigOption('background', 'w') # Standard (white)
 
 class CalcSpecWorker(QObject):
@@ -24,7 +55,7 @@ class CalcSpecWorker(QObject):
     plotsignal = pyqtSignal(tuple)
     report = pyqtSignal(str)
 
-    def __init__(self, parent, cycles, calibration, averaging, window, scaling, buffer):
+    def __init__(self, parent, cycles, calibration, averaging, window, scaling, buffer, updateTime):
         super().__init__()
         self.parent = parent
         self.cycles = cycles
@@ -33,17 +64,24 @@ class CalcSpecWorker(QObject):
         self.window = window
         self.scaling = scaling
         self.buffer = buffer
+        self.timer = QTimer()
+        self.timer.setInterval(updateTime)
+        self.timer.timeout.connect(self.calc)
 
-    def run(self):
-        while not self.parent.interrupt:
+    def calc(self):
+        if not self.parent.interrupt:
             if self.cycles == len(self.buffer):
                 data = np.ravel(self.buffer)
                 calibrated_data = data * self.calibration
-                out = signal.welch(calibrated_data, 16000,
-                                   window=self.window, scaling=self.scaling,
-                                   nperseg=len(calibrated_data)/self.averaging)
+                out = signal.welch(calibrated_data, 16000, window=self.window, scaling=self.scaling,
+                                   nperseg=len(calibrated_data)/self.averaging, overlap=0)
                 self.plotsignal.emit(out)
-        self.finished.emit()
+        else:
+            self.timer.stop()
+            self.finished.emit()
+
+    def run(self):
+        self.timer.start()
 
 class GetDataWorker(QObject):
     finished = pyqtSignal()
@@ -141,7 +179,7 @@ class SpectrumPlot(QWidget):
         self.plotCurve = self.plotWidget.plot()
         self.plotCurve.setPen(color=(0,33,165))    # UF blue
         self.plotWidget.setLabel('bottom', 'Frequency', units='Hz', size='40pt')
-        self.plotWidget.setLabel('left', 'Power', units='units^2', size ="40pt")
+        self.plotWidget.setLabel('left', 'Power', size ="40pt")
         self.plotWidget.setLogMode(True, True)
         self.plotWidget.showGrid(True, True, alpha=1.0)
         self.plotWidget.getAxis("bottom").tickFont = font
@@ -150,10 +188,12 @@ class SpectrumPlot(QWidget):
 
         self.labelChannels = QLabel('Channels:')
         self.labelCalibration = QLabel('Calibration Factor:')
-        self.labelTimebase = QLabel('Timebase (s):')
+        self.labelUnits = QLabel('Calibration Units:')
+        self.labelFreqRes = QLabel('Frequency Resolution (Hz):')
         self.labelAveraging = QLabel('Averaging:')
         self.labelWindow = QLabel('Window:')
         self.labelScaling = QLabel('Scaling:')
+        self.labelUpdate = QLabel('Plot Update Time (s)')
 
         self.comboBoxChannelMenu = QComboBox(self)
         self.comboBoxChannelMenu.addItems(self.channelOptions)
@@ -161,11 +201,17 @@ class SpectrumPlot(QWidget):
         self.lineEditCalibration = QLineEdit(self)
         self.lineEditCalibration.setText('8.1e-4')
 
-        self.lineEditTimebase = QLineEdit(self)
-        self.lineEditTimebase.setText('1')
+        self.lineEditUnits = QLineEdit(self)
+        self.lineEditUnits.setPlaceholderText('units')
+        self.lineEditUnits.setToolTip(UNITS_TIP)
+
+        self.lineEditFreqRes = QLineEdit(self)
+        self.lineEditFreqRes.setText('1')
+        self.lineEditFreqRes.setToolTip(FREQ_RES_TIP)
 
         self.lineEditAveraging = QLineEdit(self)
         self.lineEditAveraging.setText('1')
+        self.lineEditAveraging.setToolTip(AVERAGING_TIP)
 
         self.comboBoxWindow = QComboBox(self)
         self.comboBoxWindow.addItems(self.windowOptions)
@@ -173,6 +219,10 @@ class SpectrumPlot(QWidget):
 
         self.comboBoxScaling = QComboBox(self)
         self.comboBoxScaling.addItems(['spectrum', 'density'])
+
+        self.lineEditUpdate = QLineEdit(self)
+        self.lineEditUpdate.setText('1')
+        self.lineEditUpdate.setToolTip(UPDATE_TIME_TIP)
 
         self.buttonStart = QPushButton('Start Plot', self)
         self.buttonStart.clicked.connect(self.startClick)
@@ -192,17 +242,21 @@ class SpectrumPlot(QWidget):
 
         vboxLabels.addWidget(self.labelChannels)
         vboxLabels.addWidget(self.labelCalibration)
-        vboxLabels.addWidget(self.labelTimebase)
+        vboxLabels.addWidget(self.labelUnits)
+        vboxLabels.addWidget(self.labelFreqRes)
         vboxLabels.addWidget(self.labelAveraging)
         vboxLabels.addWidget(self.labelWindow)
         vboxLabels.addWidget(self.labelScaling)
+        vboxLabels.addWidget(self.labelUpdate)
 
         vboxFields.addWidget(self.comboBoxChannelMenu)
         vboxFields.addWidget(self.lineEditCalibration)
-        vboxFields.addWidget(self.lineEditTimebase)
+        vboxFields.addWidget(self.lineEditUnits)
+        vboxFields.addWidget(self.lineEditFreqRes)
         vboxFields.addWidget(self.lineEditAveraging)
         vboxFields.addWidget(self.comboBoxWindow)
         vboxFields.addWidget(self.comboBoxScaling)
+        vboxFields.addWidget(self.lineEditUpdate)
 
         hboxSettings.addLayout(vboxLabels)
         hboxSettings.addLayout(vboxFields)
@@ -231,7 +285,8 @@ class SpectrumPlot(QWidget):
         self.buttonStart.setEnabled(enabled)
         self.comboBoxChannelMenu.setEnabled(enabled)
         self.lineEditCalibration.setEnabled(enabled)
-        self.lineEditTimebase.setEnabled(enabled)
+        self.lineEditUnits.setEnabled(enabled)
+        self.lineEditFreqRes.setEnabled(enabled)
         self.lineEditAveraging.setEnabled(enabled)
         self.comboBoxWindow.setEnabled(enabled)
         self.comboBoxScaling.setEnabled(enabled)
@@ -252,17 +307,23 @@ class SpectrumPlot(QWidget):
         self.interrupt = False
         self.setEnableSettings(False)
 
+        units = self.lineEditUnits.text()
+        if not units == '':
+            self.plotWidget.setLabel('left', 'Power', units=units, size='40pt')
+
         channel = self.baseAdr + self.comboBoxChannelMenu.currentText() + '/CH00.TD'
         averaging = int(self.lineEditAveraging.text())
-        timebase = float(self.lineEditTimebase.text())
+        timebase = 1/float(self.lineEditTimebase.text())
 
         calibration = float(self.lineEditCalibration.text())
         window = self.comboBoxWindow.currentText()
         scaling = self.comboBoxScaling.currentText()
 
-        cycles = int(timebase) * averaging * 32
+        cycles = int(timebase * averaging * 32)
 
         self.buffer = deque(maxlen=cycles)
+
+        updateTime = float(self.lineEditUpdate.text())* 1e3
 
         self.getDataWorker = GetDataWorker(self, channel, self.buffer, cycles)
         self.getDataThread = QThread()
@@ -273,7 +334,7 @@ class SpectrumPlot(QWidget):
         self.getDataThread.finished.connect(self.getDataThread.deleteLater)
         self.getDataWorker.report.connect(self.workerReport)
 
-        self.calcSpecWorker = CalcSpecWorker(self, cycles, calibration, averaging, window, scaling, self.buffer)
+        self.calcSpecWorker = CalcSpecWorker(self, cycles, calibration, averaging, window, scaling, self.buffer, updateTime)
         self.calcSpecThread = QThread()
         self.calcSpecWorker.moveToThread(self.calcSpecThread)
         self.calcSpecThread.started.connect(self.calcSpecWorker.run)
