@@ -55,7 +55,7 @@ class CalcSpecWorker(QObject):
     plotsignal = pyqtSignal(tuple)
     report = pyqtSignal(str)
 
-    def __init__(self, parent, cycles, calibration, averaging, window, scaling, buffer, updateTime):
+    def __init__(self, parent, cycles, calibration, averaging, window, scaling, buffer):
         super().__init__()
         self.parent = parent
         self.cycles = cycles
@@ -64,9 +64,6 @@ class CalcSpecWorker(QObject):
         self.window = window
         self.scaling = scaling
         self.buffer = buffer
-        self.timer = QTimer()
-        self.timer.setInterval(updateTime)
-        self.timer.timeout.connect(self.calc)
 
     def calc(self):
         if not self.parent.interrupt:
@@ -74,14 +71,13 @@ class CalcSpecWorker(QObject):
                 data = np.ravel(self.buffer)
                 calibrated_data = data * self.calibration
                 out = signal.welch(calibrated_data, 16000, window=self.window, scaling=self.scaling,
-                                   nperseg=len(calibrated_data)/self.averaging, overlap=0)
+                                   nperseg=len(calibrated_data)/self.averaging, noverlap=0)
                 self.plotsignal.emit(out)
         else:
-            self.timer.stop()
             self.finished.emit()
 
     def run(self):
-        self.timer.start()
+        self.parent.timer.timeout.connect(self.calc)
 
 class GetDataWorker(QObject):
     finished = pyqtSignal()
@@ -97,14 +93,6 @@ class GetDataWorker(QObject):
     def run(self):
         try:
             pulse = 0
-            while len(self.buffer)<self.cycles and not self.parent.interrupt:
-                output = pydoocs.read(self.channel)
-                if output['macropulse'] == pulse:
-                    continue
-                else:
-                    pulse = output['macropulse']
-                    self.buffer.append( output['data'][:,1] )
-
             while not self.parent.interrupt:
                 output = pydoocs.read(self.channel)
                 if output['macropulse'] == pulse:
@@ -112,7 +100,6 @@ class GetDataWorker(QObject):
                 else:
                     pulse = output['macropulse']
                     self.buffer.append( output['data'][:,1] )
-                    self.buffer.popleft()
         except:
             self.report.emit(format_exc())
 
@@ -133,17 +120,6 @@ class SpectrumPlot(QWidget):
         'HN/CH_1.00' ]
 
     baseAdr = 'ALPS.DIAG/ALPS.ADC.'
-
-    decimationVal = {
-        "16 kHz": 16000,
-        "8 kHz": 8000,
-        "4 kHz": 4000,
-        "2 kHz": 2000,
-        "1 kHz": 1000,
-        "500 Hz": 500,
-        "100 Hz": 100,
-        "64 Hz": 64,
-        "32 Hz": 32 }
 
     windowOptions = [
         'barthann',
@@ -168,6 +144,8 @@ class SpectrumPlot(QWidget):
         self.parent = parent
         self.interrupt = False
         self.buffer = None
+        self.timer = QTimer()
+        self.timer.setInterval(1000)
 
         self.initUI()
 
@@ -223,6 +201,7 @@ class SpectrumPlot(QWidget):
         self.lineEditUpdate = QLineEdit(self)
         self.lineEditUpdate.setText('1')
         self.lineEditUpdate.setToolTip(UPDATE_TIME_TIP)
+        self.lineEditUpdate.editingFinished.connect(self.updatePlotTime)
 
         self.buttonStart = QPushButton('Start Plot', self)
         self.buttonStart.clicked.connect(self.startClick)
@@ -296,6 +275,10 @@ class SpectrumPlot(QWidget):
             self.textEditConsole.insertPlainText(str(t)+' ')
         self.textEditConsole.insertPlainText('\n')
 
+    def updatePlotTime(self):
+        updateTime = int(float(self.lineEditUpdate.text())* 1e3)
+        self.timer.setInterval(updateTime)
+
     @pyqtSlot(str)
     def workerReport(self, report):
         self.print(report)
@@ -313,7 +296,7 @@ class SpectrumPlot(QWidget):
 
         channel = self.baseAdr + self.comboBoxChannelMenu.currentText() + '/CH00.TD'
         averaging = int(self.lineEditAveraging.text())
-        timebase = 1/float(self.lineEditTimebase.text())
+        timebase = 1/float(self.lineEditFreqRes.text())
 
         calibration = float(self.lineEditCalibration.text())
         window = self.comboBoxWindow.currentText()
@@ -322,8 +305,6 @@ class SpectrumPlot(QWidget):
         cycles = int(timebase * averaging * 32)
 
         self.buffer = deque(maxlen=cycles)
-
-        updateTime = float(self.lineEditUpdate.text())* 1e3
 
         self.getDataWorker = GetDataWorker(self, channel, self.buffer, cycles)
         self.getDataThread = QThread()
@@ -334,7 +315,7 @@ class SpectrumPlot(QWidget):
         self.getDataThread.finished.connect(self.getDataThread.deleteLater)
         self.getDataWorker.report.connect(self.workerReport)
 
-        self.calcSpecWorker = CalcSpecWorker(self, cycles, calibration, averaging, window, scaling, self.buffer, updateTime)
+        self.calcSpecWorker = CalcSpecWorker(self, cycles, calibration, averaging, window, scaling, self.buffer)
         self.calcSpecThread = QThread()
         self.calcSpecWorker.moveToThread(self.calcSpecThread)
         self.calcSpecThread.started.connect(self.calcSpecWorker.run)
@@ -344,11 +325,13 @@ class SpectrumPlot(QWidget):
         self.calcSpecWorker.report.connect(self.workerReport)
         self.calcSpecWorker.plotsignal.connect(self.updatePlot)
 
+        self.getDataThread.finished.connect(lambda : self.setEnableSettings(True))
+        self.calcSpecThread.finished.connect(lambda : self.timer.stop)
+
         self.setEnableSettings(False)
         self.calcSpecThread.start()
         self.getDataThread.start()
-
-        self.getDataThread.finished.connect(lambda : self.setEnableSettings(True))
+        self.timer.start()
 
     @pyqtSlot(tuple)
     def updatePlot(self, plotData):
