@@ -10,11 +10,10 @@ import os
 import os.path
 import time
 from datetime import datetime, timedelta
-from threading import Thread
 from contextlib import ExitStack
 
-from alpsdoocslib import (MatWriter, get_doocs_data_continuous, save_mat_subroutine,
-                          DECIMATION_VALUES, BASE_ADDRESS, NR_ADDRESSES, NL_ADDRESSES, HN_ADDRESSES)
+from alpsdoocslib import (open_npy, open_mat, get_doocs_data_continuous, save_subroutine,
+                          BASE_ADDRESS, DECIMATION_VALUES)
 
 class ConfigError(Exception):
     pass
@@ -27,41 +26,37 @@ class ChannelError(ConfigError):
     """No channels selected or a file name is missing."""
     pass
 
-class SaveMatWorker(QObject):
+class SaveWorker(QObject):
     finished = pyqtSignal()
     report = pyqtSignal(str)
 
-    def __init__(self, channels, filenames, start, stop, decimationFactor):
+    def __init__(self, parent, channels, ftype, filenames, start, stop, decimationFactor):
         super().__init__()
+        self.parent = parent
         self.channels = channels
+        self.ftype = ftype
         self.filenames = filenames
         self.start = start
         self.stop = stop
         self.decimationFactor = decimationFactor
-        self.interrupt = False
-
-    @pyqtSlot()
-    def interruptListen(self):
-        self.interrupt = True
 
     def run(self):
         with ExitStack() as stack:
-            files = [stack.enter_context(open(fname, 'wb')) for fname in self.filenames]
-            mat_writers = []
+            if self.ftype == '.mat':
+                writers = [stack.enter_context(open_mat(fname)) for fname in self.filenames]
+            elif self.ftype == '.npy':
+                writers = [stack.enter_context(open_npy(fname)) for fname in self.filenames]
+            else:
+                self.report.emit("Filetype not supported.")
+                self.finished.emit()
+                return
 
-            for i in range(len(files)):
-                mat_writers.append( MatWriter(files[i]) )
-                mat_writers[i].write_preamble()
+            result = get_doocs_data_continuous(self.channels, save_subroutine,
+                                               start=self.start, stop=self.stop,
+                                               sub_args=(self.channels, writers),
+                                               interrupt=lambda : self.parent.interrupt)
 
-            result = get_doocs_data_continuous(self.channels, save_mat_subroutine,
-                                            self.start, self.stop,
-                                            sub_args=(self.channels, mat_writers, self.decimationFactor),
-                                            interrupt=lambda : self.interrupt)
-
-            for i in range(len(mat_writers)):
-                mat_writers[i].update_tags()
-
-        if 'Trace' in result or 'Exception' in result or 'Error' in result:
+        if 'Trace' in result or 'Except' in result or 'Error' in result:
             for f in self.filenames: os.remove(f)
 
         self.report.emit(result)
@@ -158,18 +153,20 @@ class ChannelSelect(QWidget):
 
 
 class SaveApp(QWidget):
-    filetypeOptions = ['.mat', '.csv' ]
+    filetypeOptions = ['.mat', '.npy', '.csv' ]
     baseAdr = BASE_ADDRESS
+
     decimationVal = DECIMATION_VALUES
 
-    interrupt = pyqtSignal()
-
-    def __init__(self):
+    def __init__(self, parent=None):
         super().__init__()
+
+        self.parent = parent
 
         self.channels = []
         self.filenames = []
         self.windowChannelSelect = None
+        self.interrupt = False
 
         self.defineWidgets()
         self.placeWidgets()
@@ -403,7 +400,7 @@ class SaveApp(QWidget):
         channels = [self.baseAdr+ch for ch in self.channels]
 
         sampleRate = self.comboBoxDownsample.currentText()
-        decimationFactor = 16000 / self.decimationVal[sampleRate]
+        decimationFactor = int(16000 / self.decimationVal[sampleRate])
 
         filesize = self.decimationVal[sampleRate] * 8 * duration * len(channels)
         if not self.oversizeCheck(filesize): return
@@ -423,27 +420,25 @@ class SaveApp(QWidget):
         for fname in filenames:
             self.print(fname)
 
-        if ftype=='.mat':
-            self.saveMatThread = QThread()
-            self.saveMatWorker = SaveMatWorker(channels, filenames, start, stop, decimationFactor)
-            self.saveMatWorker.moveToThread(self.saveMatThread)
-            self.saveMatThread.started.connect(self.saveMatWorker.run)
-            self.saveMatWorker.finished.connect(self.saveMatThread.quit)
-            self.saveMatWorker.finished.connect(self.saveMatWorker.deleteLater)
-            self.saveMatThread.finished.connect(self.saveMatThread.deleteLater)
-            self.saveMatWorker.report.connect(self.saveWorkerReport)
-            self.interrupt.connect(self.saveMatWorker.interruptListen)
+        if ftype=='.mat' or ftype=='.npy':
+            self.saveThread = QThread()
+            self.saveWorker = SaveWorker(self, channels, ftype, filenames, start, stop, decimationFactor)
+            self.saveWorker.moveToThread(self.saveThread)
+            self.saveThread.started.connect(self.saveWorker.run)
+            self.saveWorker.finished.connect(self.saveThread.quit)
+            self.saveWorker.finished.connect(self.saveWorker.deleteLater)
+            self.saveThread.finished.connect(self.saveThread.deleteLater)
+            self.saveWorker.report.connect(self.saveWorkerReport)
 
-            self.saveMatThread.start()
+            self.saveThread.start()
             self.buttonStartSave.setEnabled(False)
-            self.saveMatThread.finished.connect(lambda : self.buttonStartSave.setEnabled(True))
-            self.saveMatThread.finished.connect(lambda: self.print("Finished!"))
+            self.saveThread.finished.connect(lambda : self.buttonStartSave.setEnabled(True))
         else:
             self.print_error('File type not yet implemented.')
             return
 
         if not comments=='':
-            with open(directory+'/comments.txt', 'w') as f:
+            with open(directory+'/'+'comments.txt', 'w') as f:
                 f.write(comments)
 
     @pyqtSlot(str)
@@ -451,7 +446,7 @@ class SaveApp(QWidget):
         self.print('\n'+report)
 
     def interruptSave(self):
-        self.interrupt.emit()
+        self.interrupt = False
 
 
 if __name__ == '__main__':

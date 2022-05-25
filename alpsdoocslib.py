@@ -217,7 +217,7 @@ class MatWriter():
         self.tagcomplete = False
 
     def write_preamble(self):
-        header = pack('124c', *[self.header[i].encode('ascii') for i in range(124)])
+        header = self.header.encode('ascii')
         version = pack('H', 256)
         endian = np.ndarray(shape=(), dtype='S2', buffer=np.uint16(0x4d49)).tobytes()
         tagMatrix = pack('II', 14, 0)
@@ -275,7 +275,7 @@ class MatWriter():
         self.tagcomplete = True
 
     def close(self):
-        if self.tagcomplete:
+        if not self.tagcomplete:
             self.update_tags()
         self.file.close()
 
@@ -289,41 +289,114 @@ def open_mat(path, header=''):
         mat_writer.update_tags()
         mat_writer.close()
 
+class NpyWriter():
+    """
+    This class is a custom file-writing handler for .npy files, an alternative to
+    numpy's "save" function. Compared to .mat, the .npy format is more suited to
+    writing data continuously, but still requires some care.
+    """
+
+    def __init__(self, file):
+        self.file = file
+
+        self.descHead = "{'descr': '<i2', 'fortran_order': False, 'shape': ("
+        self.tagPos = len(self.descHead) + 10
+        self.tagEnd = ",), }"
+        self.tagcomplete = False
+
+    def write_preamble(self):
+        description_text = self.descHead + "20" + self.tagEnd
+        l = len(description_text)
+        description_text = description_text + ' '*(117-l) + '\n'
+
+        header = np.array((0x93, 0x4E, 0x55, 0x4D, 0x50, 0x59, 0x01, 0x00, 0x76, 0x00), dtype=np.uint8 ).tobytes()
+        description_bytes = description_text.encode('ascii')
+
+        self.file.write(header)
+        self.file.write(description_bytes)
+
+    def write(self, arr):
+        if not type(arr)==np.ndarray:
+            arr = np.array(arr, dtype=np.int16)
+        elif not arr.dtype == np.int16:
+            arr = arr.astype(np.int16)
+        self.file.write( arr.tobytes() )
+
+    ### IMPORTANT: this method must be called after all data is written, before you close the file.
+    def update_tags(self):
+        current_pos = self.file.tell()
+        data_start_pos = 128
+
+        num_of_nums = (current_pos - data_start_pos) // 2
+
+        self.file.seek( self.tagPos )
+        self.file.write( (str(num_of_nums)+self.tagEnd).encode('ascii') )
+
+        self.file.seek( current_pos )
+
+        self.tagcomplete = True
+
+    def close(self):
+        if not self.tagcomplete:
+            self.update_tags()
+        self.file.close()
+
+@contextmanager
+def open_npy(path):
+    npy_writer = NpyWriter(open(path, 'wb'))
+    npy_writer.write_preamble()
+    try:
+        yield npy_writer
+    finally:
+        npy_writer.update_tags()
+        npy_writer.close()
+
 ############################## EXAMPLE ##############################
-### using "get_doocs_data_continuous()" and MatWriter()
+### using "get_doocs_data_continuous" and MatWriter or NpyWriter
 
 ### define the subroutine
-def save_mat_subroutine(data_dict, channels, writers, decimationFactor=1):
+def save_subroutine(data_dict, channels, writers, decimationFactor=1):
+    """
+    A subroutine that can be used with any of the writer classes
+    defined above. Decimation is not yet implemented because the
+    writer classes only take signed 16-bit integers as data (the
+    data type from DAQ servers) but scipy's decimation will turn
+    the data type into 64-bit floating point.
+    """
     for i in range(len(data_dict)):
-        decimated_data = downsample(data_dict[i]['data'], decimationFactor)
+        #decimated_data = downsample(data_dict[i]['data'], decimationFactor)
+        decimated_data = data_dict[i]['data']
         which = channels.index( data_dict[i]['daqname'] )
         writers[which].write( decimated_data )
 
 ### Main program
-def save_mat_custom(channels, filepaths, start, stop,
-                    daq="/daq_data/alps", server="ALPS.DAQ/DAQ.SERVER1/DAQ.DATA.SVR/"):
+def save_custom(channels, filepaths, start, stop, ftype='.npy',
+                daq="/daq_data/alps", server="ALPS.DAQ/DAQ.SERVER1/DAQ.DATA.SVR/"):
 
-    ### appending '.mat' extension if not already there
-    filepaths = [fpath + '.mat'*(not fpath[-4:]=='.mat') for fpath in filepaths]
+    ### appending extension if not already there
+    filepaths = [fpath + ftype*(not fpath[-len(ftype):]==ftype) for fpath in filepaths]
 
     ### using ExitStack as the context manager because there are variable number of files to open
     with ExitStack() as stack:
         files = [stack.enter_context(open(fpath, 'wb')) for fpath in filepaths]
-        mat_writers = []
+        writers = []
 
         for i in range(len(files)):
-            header_text = channels[i] + ' from ' + start + ' until ' + stop
-            mat_writers.append( MatWriter(files[i], header=header_text) )
-            mat_writers[i].write_preamble()
+            if ftype=='.mat':
+                header_text = channels[i] + ' from ' + start + ' until ' + stop
+                writers.append( MatWriter(files[i], header=header_text) )
+            elif ftype=='.npy':
+                writers.append( NpyWriter(files[i]) )
+            writers[i].write_preamble()
 
-        result = get_doocs_data_continuous(channels, save_mat_subroutine,
+        result = get_doocs_data_continuous(channels, save_subroutine,
                                            start=start, stop=stop,
                                            daq=daq, server=server,
-                                           sub_args=(channels, mat_writers))
+                                           sub_args=(channels, writers))
 
         ### IMPORTANT: always call the .update_tags() method at the end of writing files
-        for i in range(len(mat_writers)):
-            mat_writers[i].update_tags()
+        for i in range(len(writers)):
+            writers[i].update_tags()
 
     return result
 ############################ END EXAMPLE ############################
