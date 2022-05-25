@@ -422,14 +422,13 @@ class SaveApp(QWidget):
 
         if ftype=='.mat' or ftype=='.npy':
             self.saveThread = QThread()
-            self.saveWorker = SaveWorker(channels, filenames, start, stop, decimationFactor)
+            self.saveWorker = SaveWorker(self, channels, ftype, filenames, start, stop, decimationFactor)
             self.saveWorker.moveToThread(self.saveThread)
             self.saveThread.started.connect(self.saveWorker.run)
             self.saveWorker.finished.connect(self.saveThread.quit)
             self.saveWorker.finished.connect(self.saveWorker.deleteLater)
             self.saveThread.finished.connect(self.saveThread.deleteLater)
             self.saveWorker.report.connect(self.saveWorkerReport)
-            self.interrupt.connect(self.saveWorker.interruptListen)
 
             self.saveThread.start()
             self.buttonStartSave.setEnabled(False)
