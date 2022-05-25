@@ -205,7 +205,12 @@ class MatWriter():
     each array a new variable name to distinguish between them.
     """
 
-    def __init__(self, file, header='MATLAB File'):
+    CLASS = {'double': 6, 'int16': 10}
+    TYPE = {'double': 9, 'int16': 3}
+    BYTES = {'double': 8, 'int16': 2}
+    NPY_TYPE = {'double': np.float64, 'int16': np.int16}
+
+    def __init__(self, file, dtype='int16', header='MATLAB File'):
         self.file = file
         header = header.strip()
         if len(header) > 124:
@@ -214,6 +219,10 @@ class MatWriter():
             l = len(header)
             header = header + ' '*(124-l)
         self.header = header
+        self.mclass = self.CLASS[dtype]
+        self.mtype = self.TYPE[dtype]
+        self.bytes_per_num = self.BYTES[dtype]
+        self.dtype = self.NPY_TYPE[dtype]
         self.tagcomplete = False
 
     def write_preamble(self):
@@ -222,11 +231,11 @@ class MatWriter():
         endian = np.ndarray(shape=(), dtype='S2', buffer=np.uint16(0x4d49)).tobytes()
         tagMatrix = pack('II', 14, 0)
         tagClass = pack('II', 6, 8)
-        valueClass = pack('II', 10, 0)
+        valueClass = pack('II', self.mclass, 0)
         tagDimensions = pack('II', 5, 8)
         valueDimensions = pack('ii', 1, 0)
         matrixName = np.array((1, 0, 4, 0, 0x64, 0x61, 0x74, 0x61), dtype=np.uint8 ).tobytes()
-        tagActualData = pack('II', 3, 0)
+        tagActualData = pack('II', self.mtype, 0)
 
         self.file.write(header)
         self.file.write(version)
@@ -241,9 +250,9 @@ class MatWriter():
 
     def write(self, arr):
         if not type(arr)==np.ndarray:
-            arr = np.array(arr, dtype=np.int16)
-        elif not arr.dtype == np.int16:
-            arr = arr.astype(np.int16)
+            arr = np.array(arr, dtype=self.dtype)
+        elif not arr.dtype == self.dtype:
+            arr = arr.astype(self.dtype)
         self.file.write( arr.tobytes() )
 
     ### IMPORTANT: this method must be called after all data is written, before you close the file.
@@ -252,7 +261,7 @@ class MatWriter():
         pos = {'byte count tot': 132, 'dims': 164, 'byte count vector': 180}
 
         byte_count_vec = current_pos - pos['byte count vector'] - 4
-        size = byte_count_vec // 2
+        size = byte_count_vec // self.bytes_per_num
         byte_count_tot = current_pos - pos['byte count tot'] - 4
 
         mod_8 = current_pos % 8
