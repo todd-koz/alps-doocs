@@ -3,16 +3,11 @@
 """
 Created on Mon Feb 21 12:34:13 2022
 
-@author: todd
+@author: todd, daniel
 """
-import sys
-#import pydoocs
-#import pydaq
-import time
 import numpy as np
-from numpy import *
 
-getdata_sample = [{'data': array([[15559, 15740, 15909, 16072, 16239, 16410, 16558, 16720, 16871,
+getdata_sample = [{'data': np.array([[15559, 15740, 15909, 16072, 16239, 16410, 16558, 16720, 16871,
         17022, 17168, 17314, 17458, 17600, 17727, 17867, 17993, 18128,
         18253, 18384, 18500, 18614, 18730, 18841, 18946, 19061, 19163,
         19259, 19349, 19448, 19534, 19627, 19710, 19792, 19867, 19937,
@@ -69,6 +64,6 @@ getdata_sample = [{'data': array([[15559, 15740, 15909, 16072, 16239, 16410, 165
         12917, 13115, 13309, 13513, 13711, 13909, 14096, 14284, 14475,
         14658, 14846, 15028, 15198, 15382]]), 'type': 'IMAGE', 'timestamp': 1641208980.970772, 'macropulse': 1590942828, 'miscellaneous': {'width': 500, 'height': 1, 'aoi_width': 500, 'aoi_height': 1, 'x_start': 0, 'y_start': 0, 'hbin': 1, 'vbin': 1, 'bpp': 2, 'ebitpp': 16, 'source_format': 0, 'image_format': 0, 'frame': 414029268, 'event': 1590942828, 'scale_x': -1.0, 'scale_y': -1.0, 'image_rotation': 0.0, 'fspare2': 700.0, 'fspare3': 1.9200000762939453, 'fspare4': 0.0, 'ispare2': 1, 'ispare3': 500, 'ispare4': 1, 'length': 1000, 'image_flags': 3, 'status': 0, 'daqname': 'ALPS.DIAG/ALPS.ADC.HN/CH_1.01'}}]
 
-getdata_sample2 = [{'data': array([0.01*np.sin(320 *2*np.pi* np.linspace(0, 1, 1600000))])}]
-getdata_sample3 = [{'data': array([0.03*np.sin(122 *2*np.pi* np.linspace(0, 1, 1600000))])}]
-getdata_sample4 = [{'data': array(0.1*np.random.rand(1,1600000))+getdata_sample2[0]['data'][0]}]
+getdata_sample2 = [{'data': np.array([0.01*np.sin(320 *2*np.pi* np.linspace(0, 1, 1600000))])}]
+getdata_sample3 = [{'data': np.array([0.03*np.sin(122 *2*np.pi* np.linspace(0, 1, 1600000))])}]
+getdata_sample4 = [{'data': np.array(0.1*np.random.rand(1,1600000))+getdata_sample2[0]['data'][0]}]
