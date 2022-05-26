@@ -249,7 +249,7 @@ class MatWriter():
         self.file.write(tagActualData)
 
     def write(self, arr):
-        if not type(arr)==np.ndarray:
+        if not isinstance(arr, np.ndarray):
             arr = np.array(arr, dtype=self.dtype)
         elif not arr.dtype == self.dtype:
             arr = arr.astype(self.dtype)
@@ -289,8 +289,8 @@ class MatWriter():
         self.file.close()
 
 @contextmanager
-def open_mat(path, header=''):
-    mat_writer = MatWriter(open(path, 'wb'), header)
+def open_mat(path, dtype, header=''):
+    mat_writer = MatWriter(open(path, 'wb'), dtype, header)
     mat_writer.write_preamble()
     try:
         yield mat_writer
@@ -305,13 +305,19 @@ class NpyWriter():
     writing data continuously, but still requires some care.
     """
 
-    def __init__(self, file):
+    BYTES = {'double': 8, 'int16': 2}
+    NPY_TYPE = {'double': np.float64, 'int16': np.int16}
+    HEADER_TYPE = {'double': '<f8', 'int16': '<i2'}
+
+    def __init__(self, file, dtype):
         self.file = file
 
-        self.descHead = "{'descr': '<i2', 'fortran_order': False, 'shape': ("
+        self.descHead = "{'descr': '" + self.HEADER_TYPE[dtype] + "', 'fortran_order': False, 'shape': ("
         self.tagPos = len(self.descHead) + 10
         self.tagEnd = ",), }"
         self.tagcomplete = False
+        self.bytes_per_num = self.BYTES[dtype]
+        self.dtype = self.NPY_TYPE[dtype]
 
     def write_preamble(self):
         description_text = self.descHead + "20" + self.tagEnd
@@ -325,10 +331,10 @@ class NpyWriter():
         self.file.write(description_bytes)
 
     def write(self, arr):
-        if not type(arr)==np.ndarray:
-            arr = np.array(arr, dtype=np.int16)
-        elif not arr.dtype == np.int16:
-            arr = arr.astype(np.int16)
+        if not isinstance(arr, np.ndarray):
+            arr = np.array(arr, dtype=self.dtype)
+        elif not arr.dtype == self.dtype:
+            arr = arr.astype(self.dtype)
         self.file.write( arr.tobytes() )
 
     ### IMPORTANT: this method must be called after all data is written, before you close the file.
@@ -336,7 +342,7 @@ class NpyWriter():
         current_pos = self.file.tell()
         data_start_pos = 128
 
-        num_of_nums = (current_pos - data_start_pos) // 2
+        num_of_nums = (current_pos - data_start_pos) // self.bytes_per_num
 
         self.file.seek( self.tagPos )
         self.file.write( (str(num_of_nums)+self.tagEnd).encode('ascii') )
@@ -351,8 +357,8 @@ class NpyWriter():
         self.file.close()
 
 @contextmanager
-def open_npy(path):
-    npy_writer = NpyWriter(open(path, 'wb'))
+def open_npy(path, dtype):
+    npy_writer = NpyWriter(open(path, 'wb'), dtype)
     npy_writer.write_preamble()
     try:
         yield npy_writer
@@ -373,8 +379,10 @@ def save_subroutine(data_dict, channels, writers, decimationFactor=1):
     the data type into 64-bit floating point.
     """
     for i in range(len(data_dict)):
-        #decimated_data = downsample(data_dict[i]['data'], decimationFactor)
-        decimated_data = data_dict[i]['data']
+        if decimationFactor > 1:
+            decimated_data = downsample(data_dict[i]['data'], decimationFactor)
+        else:
+            decimated_data = data_dict[i]['data']
         which = channels.index( data_dict[i]['daqname'] )
         writers[which].write( decimated_data )
 
