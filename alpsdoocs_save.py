@@ -39,13 +39,14 @@ class SaveWorker(QObject):
         self.start = start
         self.stop = stop
         self.decimationFactor = decimationFactor
+        self.dtype = 'double'*(decimationFactor>1) + 'int16'*(decimationFactor==1)
 
     def run(self):
         with ExitStack() as stack:
             if self.ftype == '.mat':
-                writers = [stack.enter_context(open_mat(fname)) for fname in self.filenames]
+                writers = [stack.enter_context(open_mat(fname, self.dtype)) for fname in self.filenames]
             elif self.ftype == '.npy':
-                writers = [stack.enter_context(open_npy(fname)) for fname in self.filenames]
+                writers = [stack.enter_context(open_npy(fname, self.dtype)) for fname in self.filenames]
             else:
                 self.report.emit("Filetype not supported.")
                 self.finished.emit()
@@ -53,7 +54,7 @@ class SaveWorker(QObject):
 
             result = get_doocs_data_continuous(self.channels, save_subroutine,
                                                start=self.start, stop=self.stop,
-                                               sub_args=(self.channels, writers),
+                                               sub_args=(self.channels, writers, self.decimationFactor),
                                                interrupt=lambda : self.parent.interrupt)
 
         if 'Trace' in result or 'Except' in result or 'Error' in result:
