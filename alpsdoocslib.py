@@ -235,7 +235,7 @@ class MatReader(BaseMatNpyReader):
             nums = np.frombuffer(b, dtype=self.dtype)
             return nums
 
-class NpyReader(MatNpyReader):
+class NpyReader(BaseMatNpyReader):
     def __init__(self, filepath, dtype):
         super().__init__(filepath, dtype)
         self.file.seek(128)
