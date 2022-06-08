@@ -7,12 +7,12 @@ from PyQt5 import QtGui
 import pyqtgraph as pg
 
 import sys
-import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from traceback import format_exc
 from collections import deque
 
 from scipy import signal
+from scipy.io import savemat
 import numpy as np
 
 import pydoocs
@@ -46,6 +46,11 @@ UPDATE_TIME_TIP = """\
 Time between the display of the next spectrum plot.
 Requesting update times significantly below 1 second
 is not guaranteed to be fulfilled.\
+"""
+
+SAVE_DATA_TIP = """\
+Saves the currently displayed plot into a MATLAB file
+as two arrays titled 'frequencies' and 'spectrum'.
 """
 
 pg.setConfigOption('background', 'w') # Standard (white)
@@ -209,6 +214,11 @@ class SpectrumPlot(QWidget):
         self.buttonStop.clicked.connect(self.stopClick)
         self.buttonStop.setEnabled(False)
 
+        self.labelFilepath = QLabel('Filepath:')
+        self.lineEditFilepath = QLineEdit(self)
+        self.buttonSaveData = QPushButton('Save Current Spectrum', self)
+        self.buttonSaveData.clicked.connect(self.saveData)
+
         self.textEditConsole = QTextEdit(self)
         self.textEditConsole.setReadOnly(True)
 
@@ -249,6 +259,14 @@ class SpectrumPlot(QWidget):
         hboxButtons.addStretch()
 
         vboxLeftPane.addLayout(hboxButtons)
+        vboxLeftPane.addSpacing(15)
+
+        hboxSave = QVBoxLayout()
+        hboxSave.addStretch()
+        hboxSave.addWidget(self.buttonSaveData)
+        hboxSave.addStretch()
+        vboxLeftPane.addLayout(hboxSave)
+
         vboxLeftPane.addStretch()
         vboxLeftPane.addWidget(self.textEditConsole)
 
@@ -338,6 +356,27 @@ class SpectrumPlot(QWidget):
         freqs, ps = plotData
         self.plotCurve.setData(freqs, ps)
         pg.Qt.QtGui.QApplication.processEvents()
+
+    def saveData(self):
+        now = datetime.now()
+        freqs, ps = self.plotCurve.getData()
+        if freqs == None:
+            self.print('No data plotted yet to save.')
+            return
+
+        dialog = QFileDialog()
+        dialog.setFileMode(QFileDialog.Directory)
+        if dialog.exec_():
+            filepath = dialog.selectedFiles()[0])
+
+        chan_name = self.comboBoxChannelMenu.currentText()
+        chan_name = chan_name.replace('/', '_')
+        chan_name = chan_name.replace('.', '_')
+
+        filepath = filepath +  + '/SpectrumData_' + chan_name + datetime.strftime(now, '%Y_%m_%dT%H_%M_%S')
+
+        savemat(filepath, {'frequencies':freqs, 'spectrum':ps}, appendmat=True)
+        self.print("Saved file: ", filepath)
 
 
 if __name__ == '__main__':
