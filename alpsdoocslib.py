@@ -4,7 +4,7 @@ import pydaq
 import csv
 import sys
 import time
-from struct import pack
+from struct import pack, unpack
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import ExitStack, contextmanager
@@ -192,8 +192,64 @@ def get_doocs_data_continuous(DOOCS_addresses, subroutine, start, stop,
         pydaq.disconnect()
         return summary
 
+############################################################
 
-class MatWriter():
+class BaseMatNpyFile():
+    MCLASS         = {'double': 6          , 'int16': 10}
+    MTYPE          = {'double': 9          , 'int16': 3}
+    BYTES          = {'double': 8          , 'int16': 2}
+    NPY_TYPE       = {'double': np.float64 , 'int16': np.int16}
+    NPY_TYPE_LABEL = {'double': '<f8'      , 'int16': '<i2'}
+
+class BaseMatNpyReader(BaseMatNpyFile):
+    def __init__(self, filepath, dtype):
+        super().__init__()
+        self.file = open(filepath, 'rb')
+        self.bytes_per_num = self.BYTES[dtype]
+        self.dtype = self.NPY_TYPE[dtype]
+
+    def tell(self):
+        return self.file.tell()
+
+    def seek(self, pos):
+        self.file.seek(pos)
+
+    def close(self):
+        self.file.close()
+
+class MatReader(BaseMatNpyReader):
+    def __init__(self, filepath, dtype):
+        super().__init__(filepath, dtype)
+        self.file.seek(180)
+        self.EOF_pos = unpack('I', self.file.read(4))[0] + 184
+
+    def read(self, N):
+        B = N*self.bytes_per_num
+        if B + self.tell() > self.EOF_pos:
+            b = self.file.read( self.EOF_pos - self.tell() )
+        else:
+            b = self.file.read( B )
+        if b==b'':
+            raise EOFError
+        else:
+            nums = np.frombuffer(b, dtype=self.dtype)
+            return nums
+
+class NpyReader(BaseMatNpyReader):
+    def __init__(self, filepath, dtype):
+        super().__init__(filepath, dtype)
+        self.file.seek(128)
+
+    def read(self, N):
+        B = N*self.bytes_per_num
+        b = self.file.read( B )
+        if b==b'':
+            raise EOFError
+        else:
+            nums = np.frombuffer(b, dtype=self.dtype)
+            return nums
+
+class MatWriter(BaseMatNpyFile):
     """
     This class is a custom file-writing handler for .mat files, an alternative to
     scipy's "savemat" function. Scipy's function and the .mat format is not well-
@@ -205,13 +261,9 @@ class MatWriter():
     each array a new variable name to distinguish between them.
     """
 
-    CLASS = {'double': 6, 'int16': 10}
-    TYPE = {'double': 9, 'int16': 3}
-    BYTES = {'double': 8, 'int16': 2}
-    NPY_TYPE = {'double': np.float64, 'int16': np.int16}
-
-    def __init__(self, file, dtype='int16', header='MATLAB File'):
-        self.file = file
+    def __init__(self, filepath, dtype, header='MATLAB File'):
+        super().__init__()
+        self.file = open(filepath, 'wb')
         header = header.strip()
         if len(header) > 124:
             header = header[:124]
@@ -219,8 +271,8 @@ class MatWriter():
             l = len(header)
             header = header + ' '*(124-l)
         self.header = header
-        self.mclass = self.CLASS[dtype]
-        self.mtype = self.TYPE[dtype]
+        self.mclass = self.MCLASS[dtype]
+        self.mtype = self.MTYPE[dtype]
         self.bytes_per_num = self.BYTES[dtype]
         self.dtype = self.NPY_TYPE[dtype]
         self.tagcomplete = False
@@ -255,7 +307,6 @@ class MatWriter():
             arr = arr.astype(self.dtype)
         self.file.write( arr.tobytes() )
 
-    ### IMPORTANT: this method must be called after all data is written, before you close the file.
     def update_tags(self):
         current_pos = self.file.tell()
         pos = {'byte count tot': 132, 'dims': 164, 'byte count vector': 180}
@@ -288,31 +339,12 @@ class MatWriter():
             self.update_tags()
         self.file.close()
 
-@contextmanager
-def open_mat(path, dtype, header=''):
-    mat_writer = MatWriter(open(path, 'wb'), dtype, header)
-    mat_writer.write_preamble()
-    try:
-        yield mat_writer
-    finally:
-        mat_writer.update_tags()
-        mat_writer.close()
+class NpyWriter(BaseMatNpyFile):
+    def __init__(self, filepath, dtype):
+        super().__init__()
+        self.file = open(filepath, 'wb')
 
-class NpyWriter():
-    """
-    This class is a custom file-writing handler for .npy files, an alternative to
-    numpy's "save" function. Compared to .mat, the .npy format is more suited to
-    writing data continuously, but still requires some care.
-    """
-
-    BYTES = {'double': 8, 'int16': 2}
-    NPY_TYPE = {'double': np.float64, 'int16': np.int16}
-    HEADER_TYPE = {'double': '<f8', 'int16': '<i2'}
-
-    def __init__(self, file, dtype):
-        self.file = file
-
-        self.descHead = "{'descr': '" + self.HEADER_TYPE[dtype] + "', 'fortran_order': False, 'shape': ("
+        self.descHead = "{'descr': '" + self.NPY_TYPE_LABEL[dtype] + "', 'fortran_order': False, 'shape': ("
         self.tagPos = len(self.descHead) + 10
         self.tagEnd = ",), }"
         self.tagcomplete = False
@@ -337,7 +369,6 @@ class NpyWriter():
             arr = arr.astype(self.dtype)
         self.file.write( arr.tobytes() )
 
-    ### IMPORTANT: this method must be called after all data is written, before you close the file.
     def update_tags(self):
         current_pos = self.file.tell()
         data_start_pos = 128
@@ -356,15 +387,59 @@ class NpyWriter():
             self.update_tags()
         self.file.close()
 
+class OpenMatNpyFileError(IOError):
+    pass
+
 @contextmanager
-def open_npy(path, dtype):
-    npy_writer = NpyWriter(open(path, 'wb'), dtype)
-    npy_writer.write_preamble()
+def open_mat(path, mode, dtype='double', header=''):
+    """
+    Context manager and factory function for MATLAB
+    reader and writer objects.
+    """
+    if mode == 'r':
+        file = MatReader(path, dtype)
+    elif mode == 'w':
+        file = MatWriter(path, dtype, header)
+    else:
+        raise OpenMatNpyFileError("File mode must be either read ('r') or write ('w')")
     try:
-        yield npy_writer
+        yield file
     finally:
-        npy_writer.update_tags()
-        npy_writer.close()
+        file.close()
+
+@contextmanager
+def open_npy(path, mode, dtype='double'):
+    """
+    Context manager and factory function for Numpy
+    reader and writer objects.
+    """
+    if mode == 'r':
+        file = NpyReader(path, dtype)
+    elif mode == 'w':
+        file = NpyWriter(path, dtype)
+    else:
+        raise OpenMatNpyFileError("File mode must be either read ('r') or write ('w')")
+    try:
+        yield file
+    finally:
+        file.close()
+
+class CSVWriter():
+    def __init__(self, filepath):
+        self.file = open(filepath, 'w', newline='')
+        self.writer = csv.writer(self.file, delimiter='\n')
+    def write(self, arr):
+        self.writer.writerows(arr)
+    def close(self):
+        self.file.close()
+
+@contextmanager
+def open_csvwrite(path):
+    file = CSVWriter(path)
+    try:
+        yield file
+    finally:
+        file.close()
 
 ############################## EXAMPLE ##############################
 ### using "get_doocs_data_continuous" and MatWriter or NpyWriter
@@ -395,16 +470,10 @@ def save_custom(channels, filepaths, start, stop, ftype='.npy',
 
     ### using ExitStack as the context manager because there are variable number of files to open
     with ExitStack() as stack:
-        files = [stack.enter_context(open(fpath, 'wb')) for fpath in filepaths]
-        writers = []
-
-        for i in range(len(files)):
-            if ftype=='.mat':
-                header_text = channels[i] + ' from ' + start + ' until ' + stop
-                writers.append( MatWriter(files[i], header=header_text) )
-            elif ftype=='.npy':
-                writers.append( NpyWriter(files[i]) )
-            writers[i].write_preamble()
+        if ftype=='.mat':
+            writers = [stack.enter_context(open_mat(fpath, 'w', 'double', header_text)) for fpath in filepaths]
+        elif ftype=='.npy':
+            writers = [stack.enter_context(open_npy(fpath, 'w', 'double')) for fpath in filepaths]
 
         result = get_doocs_data_continuous(channels, save_subroutine,
                                            start=start, stop=stop,
@@ -416,6 +485,7 @@ def save_custom(channels, filepaths, start, stop, ftype='.npy',
             writers[i].update_tags()
 
     return result
+
 ############################ END EXAMPLE ############################
 
 def remove_overlap_timestamp(past_data, new_data):

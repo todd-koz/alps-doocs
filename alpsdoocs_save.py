@@ -12,7 +12,8 @@ import time
 from datetime import datetime, timedelta
 from contextlib import ExitStack
 
-from alpsdoocslib import (open_npy, open_mat, get_doocs_data_continuous, save_subroutine,
+from alpsdoocslib import (open_npy, open_mat, open_csvwrite,
+                          get_doocs_data_continuous, save_subroutine,
                           BASE_ADDRESS, DECIMATION_VALUES)
 
 class ConfigError(Exception):
@@ -44,9 +45,11 @@ class SaveWorker(QObject):
     def run(self):
         with ExitStack() as stack:
             if self.ftype == '.mat':
-                writers = [stack.enter_context(open_mat(fname, self.dtype)) for fname in self.filenames]
+                writers = [stack.enter_context(open_mat(fname, 'w', self.dtype)) for fname in self.filenames]
             elif self.ftype == '.npy':
-                writers = [stack.enter_context(open_npy(fname, self.dtype)) for fname in self.filenames]
+                writers = [stack.enter_context(open_npy(fname, 'w', self.dtype)) for fname in self.filenames]
+            elif self.ftype == '.csv':
+                writers = [stack.enter_context(open_csvwrite(fname)) for fname in self.filenames]
             else:
                 self.report.emit("Filetype not supported.")
                 self.finished.emit()
@@ -421,22 +424,18 @@ class SaveApp(QWidget):
         for fname in filenames:
             self.print(fname)
 
-        if ftype=='.mat' or ftype=='.npy':
-            self.saveThread = QThread()
-            self.saveWorker = SaveWorker(self, channels, ftype, filenames, start, stop, decimationFactor)
-            self.saveWorker.moveToThread(self.saveThread)
-            self.saveThread.started.connect(self.saveWorker.run)
-            self.saveWorker.finished.connect(self.saveThread.quit)
-            self.saveWorker.finished.connect(self.saveWorker.deleteLater)
-            self.saveThread.finished.connect(self.saveThread.deleteLater)
-            self.saveWorker.report.connect(self.saveWorkerReport)
+        self.saveThread = QThread()
+        self.saveWorker = SaveWorker(self, channels, ftype, filenames, start, stop, decimationFactor)
+        self.saveWorker.moveToThread(self.saveThread)
+        self.saveThread.started.connect(self.saveWorker.run)
+        self.saveWorker.finished.connect(self.saveThread.quit)
+        self.saveWorker.finished.connect(self.saveWorker.deleteLater)
+        self.saveThread.finished.connect(self.saveThread.deleteLater)
+        self.saveWorker.report.connect(self.saveWorkerReport)
 
-            self.saveThread.start()
-            self.buttonStartSave.setEnabled(False)
-            self.saveThread.finished.connect(lambda : self.buttonStartSave.setEnabled(True))
-        else:
-            self.print_error('File type not yet implemented.')
-            return
+        self.saveThread.start()
+        self.buttonStartSave.setEnabled(False)
+        self.saveThread.finished.connect(lambda : self.buttonStartSave.setEnabled(True))
 
         if not comments=='':
             with open(directory+'/'+'comments.txt', 'w') as f:
