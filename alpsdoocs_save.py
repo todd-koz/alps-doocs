@@ -1,7 +1,7 @@
 from PyQt5.QtWidgets import (QWidget, QLabel, QLineEdit,
     QTextEdit, QPushButton, QCheckBox, QComboBox,
     QApplication, QHBoxLayout, QVBoxLayout,
-    QFileDialog, QMessageBox)
+    QTabWidget, QFileDialog, QMessageBox)
 from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 from PyQt5 import QtGui
 
@@ -9,12 +9,14 @@ import sys
 import os
 import os.path
 import time
+import csv
 from datetime import datetime, timedelta
 from contextlib import ExitStack
 
 from alpsdoocslib import (open_npy, open_mat, open_csvwrite,
                           get_doocs_data_continuous, save_subroutine,
-                          BASE_ADDRESS, DECIMATION_VALUES)
+                          BASE_ADDRESS, DECIMATION_VALUES,
+                          NR_ADDRESSES, NL_ADDRESSES, HN_ADDRESSES)
 
 class ConfigError(Exception):
     pass
@@ -66,44 +68,18 @@ class SaveWorker(QObject):
         self.report.emit(result)
         self.finished.emit()
 
-class ChannelSelect(QWidget):
-    channelOptions = [
-        'NR/CH_1.00',
-        'NR/CH_1.01',
-        'NR/CH_1.02',
-        'NR/CH_1.03',
-        'NR/CH_1.04',
-        'NR/CH_1.05',
-        'NR/CH_1.06',
-        'NR/CH_1.07',
-        'NL/CH_1.00',
-        'NL/CH_1.01',
-        'HN/CH_1.00' ]
-
-    def __init__(self, parent):
+class SaveChannelTab(QWidget):
+    def __init__(self, channelOptions, _channels, _filenames):
         super().__init__()
-        self.left = 100
-        self.top = 100
-        self.width = 500
-        self.height = 100
-        self.parent = parent
-        self.initUI()
+        self._channels = _channels
+        self._filenames = _filenames
 
-    def initUI(self):
+        self.channelOptions = channelOptions
+        self.checks = [QCheckBox(ch) for ch in channelOptions]
+        self.lineFilenames = [QLineEdit(self) for i in range(len(channelOptions))]
 
         self.labelChannels = QLabel('Channels:')
         self.labelNames = QLabel('File names:')
-        self.labelSelection = QLabel('Current selection:')
-        self.lineEditSelection = QLineEdit(self)
-        self.buttonUpdateSelection = QPushButton('Update Selection', self)
-        self.buttonUpdateSelection.clicked.connect(self.updateSelection)
-
-        self.checks = []
-        self.names = []
-
-        for i in range(len(self.channelOptions)):
-            self.checks.append(QCheckBox(self.channelOptions[i]))
-            self.names.append(QLineEdit(self))
 
         vboxMain = QVBoxLayout()
 
@@ -114,46 +90,73 @@ class ChannelSelect(QWidget):
         hboxLabels.addStretch()
         vboxMain.addLayout(hboxLabels)
 
-        for i in range(len(self.channelOptions)):
+        for i in range(len(channelOptions)):
             hbox = QHBoxLayout()
             hbox.addWidget(self.checks[i])
-            hbox.addWidget(self.names[i])
+            hbox.addWidget(self.lineFilenames[i])
             vboxMain.addLayout(hbox)
 
-        vboxMain.addStretch()
+        self.setLayout(vboxMain)
 
-        hboxButtons = QHBoxLayout()
-        hboxButtons.addStretch()
-        hboxButtons.addWidget(self.buttonUpdateSelection)
-        hboxButtons.addStretch()
-        vboxMain.addLayout(hboxButtons)
+    def updateSelection(self):
+        for i in range(len(self.channelOptions)):
+            if self.checks[i].isChecked():
+                self._channels.append(self.channelOptions[i])
+                self._filenames.append(self.lineFilenames[i].text())
 
-        vboxMain.addStretch()
 
-        hboxSelection = QHBoxLayout()
-        hboxSelection.addWidget(self.labelSelection)
-        hboxSelection.addWidget(self.lineEditSelection)
-        vboxMain.addLayout(hboxSelection)
+class SaveChannelSelect(QWidget):
+    selectionUpdated = pyqtSignal()
+
+    RANGE_OPTIONS = ['0-7', '8-15', '16-23', '24-31']
+    ADDRESSES = {'NR':NR_ADDRESSES, 'HN':HN_ADDRESSES, 'NL':NL_ADDRESSES}
+
+    def __init__(self, parent=None, _channels=[], _filenames=[]):
+        super().__init__()
+        self.parent = parent
+        self._channels = _channels
+        self._filenames = _filenames
+        self.initUI()
+
+    def initUI(self):
+        self.tabLocation = QTabWidget()
+        self.tabRange = {}
+        self.tabs = []
+        for loc in self.ADDRESSES.keys():
+            self.tabRange[loc] = QTabWidget()
+            for i in range(4):
+                self.tabs.append( SaveChannelTab(self.ADDRESSES[loc][i*8:i*8+8], self._channels, self._filenames) )
+                self.tabRange[loc].addTab( self.tabs[-1] , self.RANGE_OPTIONS[i] )
+            self.tabLocation.addTab( self.tabRange[loc] , loc)
+
+        self.buttonUpdateSelection = QPushButton("Update Selection")
+        self.buttonUpdateSelection.clicked.connect(self.updateSelection)
+
+        self.textSelection = QTextEdit()
+        self.textSelection.setReadOnly(True)
+
+        vboxMain = QVBoxLayout()
+        vboxMain.addWidget(self.tabLocation)
+        vboxMain.addSpacing(20)
+        vboxMain.addWidget(self.buttonUpdateSelection)
+        vboxMain.addSpacing(20)
+        vboxMain.addWidget(self.textSelection)
 
         self.setLayout(vboxMain)
         self.setWindowTitle('Select Channels')
-        self.setGeometry(self.left, self.top, self.width, self.height)
 
     def updateSelection(self):
-        self.parent.channels.clear()
-        self.parent.filenames.clear()
+        self._channels.clear()
+        self._filenames.clear()
+        self.textSelection.clear()
 
-        selectionText = ''
-        for i in range(len(self.channelOptions)):
-            if self.checks[i].isChecked():
-                ch = self.channelOptions[i]
-                fname = self.names[i].text()
-                self.parent.channels.append(ch)
-                self.parent.filenames.append(fname)
-                selectionText += f"({ch}:{fname}) "
+        for tab in self.tabs:
+            tab.updateSelection()
 
-        self.parent.lineEditChannels.setText(selectionText)
-        self.lineEditSelection.setText(selectionText)
+        for ch,fname in zip(self._channels, self._filenames):
+            self.textSelection.insertPlainText(ch + ' : ' + fname + '\n')
+
+        self.selectionUpdated.emit()
 
 
 class SaveApp(QWidget):
@@ -196,7 +199,6 @@ class SaveApp(QWidget):
         self.lineEditStartTime = QLineEdit(self)
         self.lineEditStartTime.setPlaceholderText(datetime.now().strftime('%H:%M:%S'))
         self.lineEditChannels = QLineEdit(self)
-        self.lineEditChannels.setPlaceholderText('NR/CH_1.00:ch1')
         self.lineEditDays = QLineEdit(self)
         self.lineEditDays.setText('0')
         self.lineEditHours = QLineEdit(self)
@@ -221,7 +223,7 @@ class SaveApp(QWidget):
         self.comboBoxDownsample.addItems(list(self.decimationVal.keys()))
 
         self.textEditComments = QTextEdit(self)
-        self.textEditComments.setPlaceholderText('Transmitted Power to NL')
+        self.textEditComments.setPlaceholderText("ex: 'Transmitted Power to NL'")
 
         self.textEditConsoleBox = QTextEdit(self)
         self.textEditConsoleBox.setReadOnly(True)
@@ -320,10 +322,16 @@ class SaveApp(QWidget):
         self.textEditConsoleBox.setTextColor(QtGui.QColor('black'))
 
     def openChannelSelect(self):
-        if not self.windowChannelSelect == None:
-            self.windowChannelSelect.close()
-        self.windowChannelSelect = ChannelSelect(self)
+        if self.windowChannelSelect == None:
+            self.windowChannelSelect = SaveChannelSelect(self, self.channels, self.filenames)
         self.windowChannelSelect.show()
+        self.windowChannelSelect.selectionUpdated.connect(self.displayChannelSelection)
+
+    def displayChannelSelection(self):
+        selection_text = ''
+        for ch, fname in zip(self.channels, self.filenames):
+            selection_text += f"{ch}:{fname}, "
+        self.lineEditChannels.setText(selection_text)
 
     def openFolderSelect(self):
         dialog = QFileDialog()
@@ -388,11 +396,11 @@ class SaveApp(QWidget):
 
         try:
             if self.badChannelSelection(self.channels, self.filenames):
-                raise ChannelError
+                raise ChannelError("No channels selected or a file name is missing.")
             if self.dateisPast(stop_dt):
-                raise DateError
+                raise DateError("The measurement end time has not yet been reached. Measurement end must be in the past.")
         except ConfigError as err:
-            self.print_error(err.__doc__)
+            self.print_error(str(err))
             return
 
         ftype = self.comboBoxFiletype.currentText()
