@@ -1,386 +1,464 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Mon Feb 21 13:15:16 2022
+from PyQt5.QtWidgets import (QWidget, QLabel, QLineEdit,
+    QTextEdit, QPushButton, QCheckBox, QComboBox,
+    QApplication, QHBoxLayout, QVBoxLayout,
+    QTabWidget, QFileDialog, QMessageBox)
+from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
+from PyQt5 import QtGui
 
-@author: todd
-"""
-
-from tkinter import *
-from tkinter.ttk import *
-from tkinter import scrolledtext
-from tkinter.messagebox import askyesno
-import numpy as np
-from tkcalendar import DateEntry
-from datetime import datetime
-from datetime import timedelta
-import alpsdoocslib
+import sys
 import os
 import os.path
-from example_data import *
-from pathlib import Path
+import time
+import csv
+from datetime import datetime, timedelta
+from contextlib import ExitStack
 
-root = Tk()
-root.title('ALPS DOOCS Save Data')
-#root.geometry("400x600")
+from alpsdoocslib import (open_npy, open_mat, open_csvwrite,
+                          get_doocs_data_continuous, save_subroutine,
+                          BASE_ADDRESS, DECIMATION_VALUES,
+                          NR_ADDRESSES, NL_ADDRESSES, HN_ADDRESSES)
 
-### generate a class of configuration object
-class saveConfig(object):
+class ConfigError(Exception):
     pass
-myConfig = saveConfig()
 
-### unique exception to be flagged when asking for data that hasn't been recorded yet
-class DateError(Exception):
+class DateError(ConfigError):
     """The measurement end time has not yet been reached. Measurement end must be in the past."""
     pass
 
+class ChannelError(ConfigError):
+    """No channels selected or a file name is missing."""
+    pass
 
-############################### UpdateConfig() ################################
-### Function called when pressing the "Update Configuration" button. This function
-### populates all the entry parameters provided by the user as attributes of "myConfig" object
-def UpdateConfig():
-    try:
-        global myConfig
-        myConfig.channels=[channel1select.get(),channel2select.get(),channel3select.get(),channel4select.get()]
-        myConfig.channelcomments=[channel1Comment.get(),channel2Comment.get(),channel3Comment.get(),channel4Comment.get()]  
-        myConfig.filename=filename.get()
-        myConfig.filetype=filetype.get()
-        myConfig.time=[int(duration_d.get()),int(duration_h.get()),int(duration_m.get()),int(duration_s.get())]
-        myConfig.mytimedelta = timedelta(days=myConfig.time[0],hours=myConfig.time[1],minutes=myConfig.time[2],seconds=myConfig.time[3])
-        myConfig.start_datetime = datetime.strptime(startdate.get()+starttime.get(), "%Y-%m-%d%H:%M:%S")
-        myConfig.stop_datetime = myConfig.start_datetime + myConfig.mytimedelta
-        myConfig.input_start = myConfig.start_datetime.strftime('%Y-%m-%dT%H:%M:%S')
-        myConfig.input_stop = myConfig.stop_datetime.strftime('%Y-%m-%dT%H:%M:%S')
-        myConfig.path = directory.get()+myConfig.filename+myConfig.filetype
-        myConfig.dirpath = directory.get()
-        myConfig.usercomment = usercommentBox.get("1.0",END)
-        
-        ### checks the measurement duration is entirely in the past
-        if not dateisPast(myConfig.stop_datetime):
-            raise DateError
-        
-        ### checks the number of channels to save data from, based on how many channels are not left "None"
-        numChannels = 0
-        if myConfig.channels[0] != "None":
-            numChannels += 1
-        if myConfig.channels[1] != "None":
-            numChannels += 1
-        if myConfig.channels[2] != "None":
-            numChannels += 1
-        if myConfig.channels[3] != "None":
-            numChannels += 1
-                
-        myConfig.decimation=decimation.get()
-        myConfig.decimationFactor = 16000 / decimationVal[decimation.get()] #calculates the factor by which data is decimated,
-                                                                            # e.g. for downsample from 16kHz to 8kHz, the factor is 2
-        
-        myConfig.filesize = decimationVal[decimation.get()]*8*myConfig.mytimedelta.total_seconds()*numChannels/1e6 ## estimates the output filesize in MB
-        myConfig.configSummary = (
-                                    f"\n###########################################################"
-                                    f"\nFile save configuration overview."
-                                    f"\n   This will save data to: {myConfig.path}"
-                                    f"\n   Data start time: {myConfig.start_datetime}"
-                                    f"\n   Data stop time: {myConfig.stop_datetime}"
-                                    f"\n   Data Duration: {myConfig.mytimedelta}"
-                                    f"\n   Sampling rate: {myConfig.decimation}"
-                                    f"\n   Saving on Channel 1: {myConfig.channels[0]} ..... channel label: {myConfig.channelcomments[0]}"
-                                    f"\n   Saving on Channel 2: {myConfig.channels[1]} ..... channel label: {myConfig.channelcomments[1]}"
-                                    f"\n   Saving on Channel 3: {myConfig.channels[2]} ..... channel label: {myConfig.channelcomments[2]}"
-                                    f"\n   Saving on Channel 4: {myConfig.channels[3]} ..... channel label: {myConfig.channelcomments[3]}\n"
-                                  )
-        consoleBox.config(state=NORMAL)
-        consoleBox.insert('insert',myConfig.configSummary)
-        consoleBox.tag_config('warning',foreground="red")
-        if myConfig.filesize > 1e9:
-            consoleBox.insert('insert',f"\n   CAUTION!! Estimated output file size: {myConfig.filesize} MB",'warning')
-        else:
-            consoleBox.insert('insert',f"\n   Estimated output file size: {myConfig.filesize} MB")
-        consoleBox.see(END)
-        consoleBox.config(state=DISABLED)
-        saveFileButton.config(state = NORMAL)
-    except DateError:
-        consoleBox.tag_config('warning',foreground="red")
-        consoleBox.config(state=NORMAL)
-        consoleBox.insert(END,("\n\nError occured: The measurement end time has not yet been reached. Measurement end must be in the past"),'warning')
-        consoleBox.config(state=DISABLED)
-        consoleBox.see(END)
-    except Exception as e:
-        consoleBox.tag_config('warning',foreground="red")
-        consoleBox.config(state=NORMAL)
-        consoleBox.insert(END,("\n\nError occured: {0} \nPlease check the format of your entries! \n".format(e)),'warning')
-        consoleBox.config(state=DISABLED)
-        consoleBox.see(END)
+class SaveWorker(QObject):
+    finished = pyqtSignal()
+    report = pyqtSignal(str)
 
-    ### strips away channels left as "None" from the daqchannels list    
-    myConfig.daqchannels=[value for value in myConfig.channels if value != 'None']
-        
-    
-    
-########################### SaveButtonClick() #################################    
-### Function called when pressing the "Save Data" button. This function calls the 
-### get_doocs_data function (from alpsdoocslib) to populate up to four variables with
-### data from DAQ. First checks the file size and file name iwth oversizeCheck and 
-### overwriteCheck (both from alpsdoocslib) to make sure the destination file is not
-### oversized or overwriting another file without explicit permission.
-def SaveButtonClick():
-    global myConfig
-    if oversizeCheck(myConfig.filesize):   
-        if overwriteCheck(myConfig.path):
-            print(f'Saving some data! filename: {myConfig.path}')
-######### Temporary substitution of sample data for testing ###################
-            ch1data = getdata_sample[0]['data']
-            ch2data,ch3data,ch4data = [],[],[]
-###############################################################################
-            channels = ['ALPS.DIAG/ALPS.ADC.'+s for s in myConfig.daqchannels] ### generates channels names in the format desired by get_doocs_data
-            start = myConfig.input_start  ### generates start time in the format desired by get_doocs_data
-            stop = myConfig.input_stop    ### generates stop time in the format desired by get_doocs_data
-#            [ch1data,ch2data,ch3data,ch4data,stats] = alpsdoocslib.get_doocs_data(channels=channels,start=start,stop=stop)
-            datas=[ch1data,ch2data,ch3data,ch4data]   ### combines all data from all channels in single list-of-lists 
-            datas=[x for x in datas if len(x)>0]      ### strips away all empty data channels
-            
-            
-            ### Calls to the decimate_data function in alpsdoocslib which applies
-            ### a decimation algorithm to reduce the data length
-            if myConfig.decimation != "16kHz":
-                for datas in datas:
-                    datas = alpsdoocslib.decimate_data(datas, int(myConfig.decimationFactor))
+    def __init__(self, parent, channels, ftype, filenames, start, stop, decimationFactor):
+        super().__init__()
+        self.parent = parent
+        self.channels = channels
+        self.ftype = ftype
+        self.filenames = filenames
+        self.start = start
+        self.stop = stop
+        self.decimationFactor = decimationFactor
+        self.dtype = 'double'*(decimationFactor>1) + 'int16'*(decimationFactor==1)
 
-                                                
-            if myConfig.filetype == ".csv":
-                print('saving as a csv file')
-#                alpsdoocslib.save_to_csv(sampledata,myConfig.path)
-            if myConfig.filetype == ".mat":
-                print('Saving data as a .mat file.')
+    def run(self):
+        with ExitStack() as stack:
+            if self.ftype == '.mat':
+                writers = [stack.enter_context(open_mat(fname, 'w', self.dtype)) for fname in self.filenames]
+            elif self.ftype == '.npy':
+                writers = [stack.enter_context(open_npy(fname, 'w', self.dtype)) for fname in self.filenames]
+            elif self.ftype == '.csv':
+                writers = [stack.enter_context(open_csvwrite(fname)) for fname in self.filenames]
+            else:
+                self.report.emit("Filetype not supported.")
+                self.finished.emit()
+                return
 
-                channels=myConfig.daqchannels
-                labels=myConfig.channelcomments
-                fs=decimationVal[decimation.get()]
-                path=myConfig.path
-                events=10
-                alpsdoocslib.save_to_mat(datas=datas,labels=labels,channels=channels,fs=fs,path=path,events=events)
-    saveConfigFile()
-    saveFileButton.config(state=DISABLED)
+            result = get_doocs_data_continuous(self.channels, save_subroutine,
+                                               start=self.start, stop=self.stop,
+                                               sub_args=(self.channels, writers, self.decimationFactor),
+                                               interrupt=lambda : self.parent.interrupt)
+
+        if 'Trace' in result or 'Except' in result or 'Error' in result:
+            for f in self.filenames: os.remove(f)
+
+        self.report.emit(result)
+        self.finished.emit()
+
+class SaveChannelTab(QWidget):
+    def __init__(self, channelOptions, _channels, _filenames):
+        super().__init__()
+        self._channels = _channels
+        self._filenames = _filenames
+
+        self.channelOptions = channelOptions
+        self.checks = [QCheckBox(ch) for ch in channelOptions]
+        self.lineFilenames = [QLineEdit(self) for i in range(len(channelOptions))]
+
+        self.labelChannels = QLabel('Channels:')
+        self.labelNames = QLabel('File names:')
+
+        vboxMain = QVBoxLayout()
+
+        hboxLabels = QHBoxLayout()
+        hboxLabels.addWidget(self.labelChannels)
+        hboxLabels.addStretch()
+        hboxLabels.addWidget(self.labelNames)
+        hboxLabels.addStretch()
+        vboxMain.addLayout(hboxLabels)
+
+        for i in range(len(channelOptions)):
+            hbox = QHBoxLayout()
+            hbox.addWidget(self.checks[i])
+            hbox.addWidget(self.lineFilenames[i])
+            vboxMain.addLayout(hbox)
+
+        self.setLayout(vboxMain)
+
+    def updateSelection(self):
+        for i in range(len(self.channelOptions)):
+            if self.checks[i].isChecked():
+                self._channels.append(self.channelOptions[i])
+                self._filenames.append(self.lineFilenames[i].text())
 
 
-######################### saveConfigFile() ####################################
-### saves a text file containing the configuration settings and user comments
-def saveConfigFile():
-    global myConfig
-    with open(myConfig.dirpath+myConfig.filename+'_config_file.txt', 'w') as f:
-        f.write(myConfig.configSummary)
-        f.write("\n\nUser Comments: \n  ")
-        f.write(myConfig.usercomment)
-    print('Saving configuration text file!')
+class SaveChannelSelect(QWidget):
+    selectionUpdated = pyqtSignal()
 
-########################################################################
-########################################################################
-########################################################################
+    RANGE_OPTIONS = ['0-7', '8-15', '16-23', '24-31']
+    ADDRESSES = {'NR':NR_ADDRESSES, 'HN':HN_ADDRESSES, 'NL':NL_ADDRESSES}
 
-### entry field labels
-channelsLabel = Label(root,text="Select channels ")
-channel1Label = Label(root,text="Channel 1:")
-channel2Label = Label(root,text="Channel 2:")
-channel3Label = Label(root,text="Channel 3:")
-channel4Label = Label(root,text="Channel 4:")
-filetypeLabel = Label(root,text="Filetype: ")
-directoryLabel = Label(root,text="Save Directory: ")
-filenameLabel = Label(root,text="Filename: ")
-startdateLabel = Label(root,text="Data start date: ")
-starttimeLabel = Label(root,text="Data start time: ")
-durationLabel = Label(root,text="Duration: ")
-daysLabel = Label(root,text="Days:")
-hoursLabel = Label(root,text="Hours:")
-minutesLabel = Label(root,text="Minutes:")
-secondsLabel = Label(root,text="Seconds:")
-usercommentsLabel = Label(root,text="Enter additional user comments about this measurement/data. \nThese additional comments will be saved as a .txt file in the destination directory.")
+    def __init__(self, parent=None, _channels=[], _filenames=[]):
+        super().__init__()
+        self.parent = parent
+        self._channels = _channels
+        self._filenames = _filenames
+        self.initUI()
 
-### Channel selection dropdown menus
-channel_options = [
-        'None',
-        'NR/CH_1.00',
-        'NR/CH_1.01',
-        'NR/CH_1.02',
-        'NR/CH_1.03',
-        'NR/CH_1.04',
-        'NR/CH_1.05',
-        'NR/CH_1.06',
-        'NR/CH_1.07',
-        'NL/CH_1.00',
-        'NL/CH_1.01',
-        'HN/CH_1.00',
-        ]
-channel1select = StringVar()
-channel2select = StringVar()
-channel3select = StringVar()
-channel4select = StringVar()
-channel1_drop = OptionMenu(root, channel1select, channel_options[0], *channel_options)
-channel2_drop = OptionMenu(root, channel2select, channel_options[0], *channel_options)
-channel3_drop = OptionMenu(root, channel3select, channel_options[0], *channel_options)
-channel4_drop = OptionMenu(root, channel4select, channel_options[0], *channel_options)
+    def initUI(self):
+        self.tabLocation = QTabWidget()
+        self.tabRange = {}
+        self.tabs = []
+        for loc in self.ADDRESSES.keys():
+            self.tabRange[loc] = QTabWidget()
+            for i in range(4):
+                self.tabs.append( SaveChannelTab(self.ADDRESSES[loc][i*8:i*8+8], self._channels, self._filenames) )
+                self.tabRange[loc].addTab( self.tabs[-1] , self.RANGE_OPTIONS[i] )
+            self.tabLocation.addTab( self.tabRange[loc] , loc)
+
+        self.buttonUpdateSelection = QPushButton("Update Selection")
+        self.buttonUpdateSelection.clicked.connect(self.updateSelection)
+
+        self.textSelection = QTextEdit()
+        self.textSelection.setReadOnly(True)
+
+        vboxMain = QVBoxLayout()
+        vboxMain.addWidget(self.tabLocation)
+        vboxMain.addSpacing(20)
+        vboxMain.addWidget(self.buttonUpdateSelection)
+        vboxMain.addSpacing(20)
+        vboxMain.addWidget(self.textSelection)
+
+        self.setLayout(vboxMain)
+        self.setWindowTitle('Select Channels')
+
+    def updateSelection(self):
+        self._channels.clear()
+        self._filenames.clear()
+        self.textSelection.clear()
+
+        for tab in self.tabs:
+            tab.updateSelection()
+
+        for ch,fname in zip(self._channels, self._filenames):
+            self.textSelection.insertPlainText(ch + ' : ' + fname + '\n')
+
+        self.selectionUpdated.emit()
 
 
-### filetype dropdown menu
-filetype = StringVar()
-filetype.set(".mat")
-filetype_options = [
-        ".mat",
-        ".csv"
-        ] 
-filetype_drop = OptionMenu(root, filetype, filetype_options[0], *filetype_options)
-###
+class SaveApp(QWidget):
+    filetypeOptions = ['.mat', '.npy', '.csv' ]
+    baseAdr = BASE_ADDRESS
 
-########### destination directory entry field #################################
-directory = Entry(root,width=50,justify='right')
-directory.insert(0,os.getcwd())
-directory.xview_moveto(1)
-###
+    decimationVal = DECIMATION_VALUES
 
-########### channel user comments #############################################
-channel1Comment = Entry(root,width=10)
-channel1Comment.insert(0,"")
-channel2Comment = Entry(root,width=10)
-channel2Comment.insert(0,"")
-channel3Comment = Entry(root,width=10)
-channel3Comment.insert(0,"")
-channel4Comment = Entry(root,width=10)
-channel4Comment.insert(0,"")
-###
+    def __init__(self, parent=None):
+        super().__init__()
 
-############### file name entry field #########################################
-filename = Entry(root,width=50)
-filename.insert(0,"default_filename")
-### 
+        self.parent = parent
 
-### start date entry field
-startdate = Entry(root,width=50)
-startdate.insert(0,datetime.today().strftime('%Y-%m-%d'))
-### 
+        self.channels = []
+        self.filenames = []
+        self.windowChannelSelect = None
+        self.interrupt = False
 
-### start time entry field
-starttime = Entry(root,width=50)
-starttime.insert(0,datetime.today().strftime('%H:%M:%S'))
-### 
+        self.defineWidgets()
+        self.placeWidgets()
 
-### duration days entry field
-duration_d = Entry(root,width=10)
-duration_d.insert(0,0)
+    def defineWidgets(self):
+        self.labelFiletype = QLabel('Filetype:')
+        self.labelDirectory = QLabel('Save directory:')
+        self.labelStartDate = QLabel('Start date:')
+        self.labelStartTime = QLabel('Start time:')
+        self.labelChannels = QLabel('Select channels:')
+        self.labelDuration = QLabel('Duration:')
+        self.labelDays = QLabel('Days:')
+        self.labelHours = QLabel('Hours:')
+        self.labelMinutes = QLabel('Minutes:')
+        self.labelSeconds = QLabel('Seconds:')
+        self.labelDownsample = QLabel('Down-sampling:')
+        self.labelComments = QLabel('Additional comments:')
 
-### duration hours entry field
-duration_h = Entry(root,width=10)
-duration_h.insert(0,0)
+        self.lineEditDirectory = QLineEdit(self)
+        self.lineEditDirectory.setPlaceholderText(os.getcwd())
+        self.lineEditStartDate = QLineEdit(self)
+        self.lineEditStartDate.setPlaceholderText(datetime.now().strftime('%Y-%m-%d'))
+        self.lineEditStartTime = QLineEdit(self)
+        self.lineEditStartTime.setPlaceholderText(datetime.now().strftime('%H:%M:%S'))
+        self.lineEditChannels = QLineEdit(self)
+        self.lineEditDays = QLineEdit(self)
+        self.lineEditDays.setText('0')
+        self.lineEditHours = QLineEdit(self)
+        self.lineEditHours.setText('0')
+        self.lineEditMinutes = QLineEdit(self)
+        self.lineEditMinutes.setText('0')
+        self.lineEditSeconds = QLineEdit(self)
+        self.lineEditSeconds.setText('10')
 
-### duration minutes entry field
-duration_m = Entry(root,width=10)
-duration_m.insert(0,0)
+        self.buttonSelectChannels = QPushButton('Select Channels', self)
+        self.buttonSelectChannels.clicked.connect(self.openChannelSelect)
+        self.buttonStartSave = QPushButton('Start', self)
+        self.buttonStartSave.clicked.connect(self.startSave)
+        self.buttonInterrupt = QPushButton('Interrupt', self)
+        self.buttonInterrupt.clicked.connect(self.interruptSave)
+        self.buttonSelectFolder = QPushButton('Select directory', self)
+        self.buttonSelectFolder.clicked.connect(self.openFolderSelect)
 
-### duration seconds entry field
-duration_s = Entry(root,width=10)
-duration_s.insert(0,10)
+        self.comboBoxFiletype = QComboBox(self)
+        self.comboBoxFiletype.addItems(self.filetypeOptions)
+        self.comboBoxDownsample = QComboBox(self)
+        self.comboBoxDownsample.addItems(list(self.decimationVal.keys()))
 
-mytimedelta=timedelta(days=int(duration_d.get()),hours=int(duration_h.get()),minutes=int(duration_m.get()),seconds=int(duration_s.get()))
-mystarttime=datetime.strptime(startdate.get()+starttime.get(), "%Y-%m-%d%H:%M:%S")
+        self.textEditComments = QTextEdit(self)
+        self.textEditComments.setPlaceholderText("ex: 'Transmitted Power to NL'")
 
-myFileLabel = Label(root,text=filename.get()+filetype.get())
-myStartDateLabel = Label(root,text=mystarttime)
-myTimeDeltaLabel = Label(root,text=mytimedelta)
-myEndDateLabel = Label(root,text=mystarttime+mytimedelta)
+        self.textEditConsoleBox = QTextEdit(self)
+        self.textEditConsoleBox.setReadOnly(True)
+        self.textEditConsoleBox.setTextColor(QtGui.QColor('black'))
 
-myDecimationLabel = Label(root,text="Downsample to:")
-### filetype dropdown menu
-decimation=StringVar()
-decimationVal = {
-        "16kHz": 16000,
-        "16kHz": 16000,
-        "8kHz": 8000,
-        "4kHz": 4000,
-        "2kHz": 2000,
-        "1kHz": 1000,
-        "500Hz": 500,
-        "100Hz": 100,
-        "64Hz": 64,
-        "32Hz": 32
-        }
-decimation_drop = OptionMenu(root, decimation, list(decimationVal.keys())[0], *list(decimationVal.keys()))
-###
-##
+    def placeWidgets(self):
+        hboxMain = QHBoxLayout()
+        vboxSettings = QVBoxLayout()
+
+        hboxFiletypeDownsample = QHBoxLayout()
+        hboxFiletypeDownsample.addWidget(self.labelFiletype)
+        hboxFiletypeDownsample.addWidget(self.comboBoxFiletype)
+        hboxFiletypeDownsample.addSpacing(20)
+        hboxFiletypeDownsample.addWidget(self.labelDownsample)
+        hboxFiletypeDownsample.addWidget(self.comboBoxDownsample)
+        vboxSettings.addLayout(hboxFiletypeDownsample)
+
+        hboxDirectory = QHBoxLayout()
+        hboxDirectory.addWidget(self.labelDirectory)
+        hboxDirectory.addWidget(self.lineEditDirectory)
+        hboxDirectory.addWidget(self.buttonSelectFolder)
+        vboxSettings.addLayout(hboxDirectory)
+
+        hboxStartDate = QHBoxLayout()
+        hboxStartDate.addWidget(self.labelStartDate)
+        hboxStartDate.addWidget(self.lineEditStartDate)
+        vboxSettings.addLayout(hboxStartDate)
+
+        hboxStartTime = QHBoxLayout()
+        hboxStartTime.addWidget(self.labelStartTime)
+        hboxStartTime.addWidget(self.lineEditStartTime)
+        vboxSettings.addLayout(hboxStartTime)
+
+        hboxChannels = QHBoxLayout()
+        hboxChannels.addWidget(self.labelChannels)
+        hboxChannels.addWidget(self.lineEditChannels)
+        hboxChannels.addWidget(self.buttonSelectChannels)
+        vboxSettings.addLayout(hboxChannels)
+
+        hboxDuration = QHBoxLayout()
+        vboxDuration = QVBoxLayout()
+        vboxDuration.addStretch()
+        vboxDuration.addWidget(self.labelDuration)
+        hboxDuration.addLayout(vboxDuration)
+        vboxDays = QVBoxLayout()
+        vboxDays.addWidget(self.labelDays)
+        vboxDays.addWidget(self.lineEditDays)
+        hboxDuration.addLayout(vboxDays)
+        vboxHours = QVBoxLayout()
+        vboxHours.addWidget(self.labelHours)
+        vboxHours.addWidget(self.lineEditHours)
+        hboxDuration.addLayout(vboxHours)
+        vboxMinutes = QVBoxLayout()
+        vboxMinutes.addWidget(self.labelMinutes)
+        vboxMinutes.addWidget(self.lineEditMinutes)
+        hboxDuration.addLayout(vboxMinutes)
+        vboxSeconds = QVBoxLayout()
+        vboxSeconds.addWidget(self.labelSeconds)
+        vboxSeconds.addWidget(self.lineEditSeconds)
+        hboxDuration.addLayout(vboxSeconds)
+        vboxSettings.addLayout(hboxDuration)
+        vboxSettings.addSpacing(20)
+
+        vboxComments = QVBoxLayout()
+        vboxComments.addWidget(self.labelComments)
+        vboxComments.addWidget(self.textEditComments)
+        vboxSettings.addLayout(vboxComments)
+
+        hboxStartStop = QHBoxLayout()
+        hboxStartStop.addStretch()
+        hboxStartStop.addWidget(self.buttonStartSave)
+        hboxStartStop.addWidget(self.buttonInterrupt)
+        hboxStartStop.addStretch()
+        vboxSettings.addLayout(hboxStartStop)
+
+        hboxMain.addLayout(vboxSettings)
+
+        vboxConsole = QVBoxLayout()
+        vboxConsole.addWidget(self.textEditConsoleBox)
+        hboxMain.addLayout(vboxConsole)
+
+        hboxMain.setStretchFactor(vboxSettings, 1)
+        hboxMain.setStretchFactor(vboxConsole, 1)
+
+        self.setLayout(hboxMain)
+        self.setWindowTitle('ALPS - Save Data from DOOCS')
+
+    def print(self, *text):
+        for t in text:
+            self.textEditConsoleBox.insertPlainText(str(t)+' ')
+        self.textEditConsoleBox.insertPlainText('\n')
+
+    def print_error(self, text):
+        self.textEditConsoleBox.setTextColor(QtGui.QColor('red'))
+        self.textEditConsoleBox.insertPlainText(text+'\n')
+        self.textEditConsoleBox.setTextColor(QtGui.QColor('black'))
+
+    def openChannelSelect(self):
+        if self.windowChannelSelect == None:
+            self.windowChannelSelect = SaveChannelSelect(self, self.channels, self.filenames)
+        self.windowChannelSelect.show()
+        self.windowChannelSelect.selectionUpdated.connect(self.displayChannelSelection)
+
+    def displayChannelSelection(self):
+        selection_text = ''
+        for ch, fname in zip(self.channels, self.filenames):
+            selection_text += f"{ch}:{fname}, "
+        self.lineEditChannels.setText(selection_text)
+
+    def openFolderSelect(self):
+        dialog = QFileDialog()
+        dialog.setFileMode(QFileDialog.Directory)
+        if dialog.exec_():
+            self.lineEditDirectory.setText(dialog.selectedFiles()[0])
+
+    def getTimes(self):
+        start = self.lineEditStartDate.text() + 'T' + self.lineEditStartTime.text()
+        start_dt = datetime.strptime(start, "%Y-%m-%dT%H:%M:%S")
+
+        duration_dt = timedelta(
+            days = int(self.lineEditDays.text()),
+            hours = int(self.lineEditHours.text()),
+            minutes = int(self.lineEditMinutes.text()),
+            seconds = int(self.lineEditSeconds.text())
+        )
+        duration = duration_dt.seconds
+
+        stop_dt = (start_dt + duration_dt)
+        stop = stop_dt.strftime('%Y-%m-%dT%H:%M:%S')
+
+        return start, stop, duration, stop_dt
+
+    def dateisPast(self, stoptime):
+        return datetime.now() < stoptime
+
+    def badChannelSelection(self, channels, names):
+        result = not any(channels)
+        for name in names:
+            result = result or (name=='')
+        return result
+
+    def overwriteCheck(self, filenames):
+        overwrite = True
+        for file in filenames:
+            if os.path.exists(file):
+                msg = QMessageBox()
+                msg.setWindowTitle('File warning')
+                msg.setIcon(QMessageBox.Warning)
+                msg.setText(f'Existing file found: {file}\n\nOverwrite file?')
+                msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+                choice = msg.exec()
+                overwrite &= (choice == QMessageBox.Yes)
+                if not overwrite: break
+        return overwrite
+
+    def oversizeCheck(self, filesize):
+        writeoversize = True
+        if filesize > 1e9:
+            msg = QMessageBox()
+            msg.setWindowTitle('File warning')
+            msg.setIcon(QMessageBox.Warning)
+            msg.setText("The expected filesize is "+str(round(filesize/1e9,-1))+" GB. Are you sure you want to proceed?")
+            msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            choice = msg.exec()
+            writeoversize &= (choice == QMessageBox.Yes)
+        return writeoversize
+
+    def startSave(self):
+        start, stop, duration, stop_dt = self.getTimes()
+
+        try:
+            if self.badChannelSelection(self.channels, self.filenames):
+                raise ChannelError("No channels selected or a file name is missing.")
+            if self.dateisPast(stop_dt):
+                raise DateError("The measurement end time has not yet been reached. Measurement end must be in the past.")
+        except ConfigError as err:
+            self.print_error(str(err))
+            return
+
+        ftype = self.comboBoxFiletype.currentText()
+        directory = self.lineEditDirectory.text()
+
+        filenames = [directory+'/'+fname.replace(' ','_')+ftype*(not fname[-len(ftype):]==ftype) for fname in self.filenames]
+        if not self.overwriteCheck(filenames): return
+
+        channels = [self.baseAdr+ch for ch in self.channels]
+
+        sampleRate = self.comboBoxDownsample.currentText()
+        decimationFactor = int(16000 / self.decimationVal[sampleRate])
+
+        filesize = self.decimationVal[sampleRate] * 8 * duration * len(channels)
+        if not self.oversizeCheck(filesize): return
+
+        comments = self.textEditComments.toPlainText()
+
+        self.print('Directory:', directory)
+        self.print('Start:', start)
+        self.print('Duration:', duration, 'seconds')
+        self.print('Sampling rate:', sampleRate)
+
+        self.print('\nChannels:')
+        for ch in channels:
+            self.print(ch)
+
+        self.print('\nFile names:')
+        for fname in filenames:
+            self.print(fname)
+
+        self.saveThread = QThread()
+        self.saveWorker = SaveWorker(self, channels, ftype, filenames, start, stop, decimationFactor)
+        self.saveWorker.moveToThread(self.saveThread)
+        self.saveThread.started.connect(self.saveWorker.run)
+        self.saveWorker.finished.connect(self.saveThread.quit)
+        self.saveWorker.finished.connect(self.saveWorker.deleteLater)
+        self.saveThread.finished.connect(self.saveThread.deleteLater)
+        self.saveWorker.report.connect(self.saveWorkerReport)
+
+        self.saveThread.start()
+        self.buttonStartSave.setEnabled(False)
+        self.saveThread.finished.connect(lambda : self.buttonStartSave.setEnabled(True))
+
+        if not comments=='':
+            with open(directory+'/'+'comments.txt', 'w') as f:
+                f.write(comments)
+
+    @pyqtSlot(str)
+    def saveWorkerReport(self, report):
+        self.print('\n'+report)
+
+    def interruptSave(self):
+        self.interrupt = False
 
 
-
-
-#input_stop = 
-#input_duration = 
-
-updateConfigButton = Button(root, text="Update Save Configuration", command=UpdateConfig)
-saveFileButton = Button(root, text="Save File",command=SaveButtonClick, state = DISABLED)
-
-### Labels
-filetypeLabel.grid(row=0,column=0,sticky=W,pady=2)
-directoryLabel.grid(row=1,column=0,sticky=W,pady=2)
-filenameLabel.grid(row=2,column=0,sticky=W,pady=2)
-startdateLabel.grid(row=3,column=0,sticky=W,pady=2)
-starttimeLabel.grid(row=4,column=0,sticky=W,pady=2)
-durationLabel.grid(row=5,column=0,sticky=W,pady=2)
-daysLabel.grid(row=5,column=1,sticky=W,pady=2)
-hoursLabel.grid(row=5,column=2,sticky=W,pady=2)
-minutesLabel.grid(row=5,column=3,sticky=W,pady=2)
-secondsLabel.grid(row=5,column=4,sticky=W,pady=2)
-
-### Entry fields
-filetype_drop.grid(row=0,column=1,sticky=W,pady=2)
-directory.grid(row=1,column=1,sticky=W,pady=2,columnspan=4)
-filename.grid(row=2,column=1,sticky=W,pady=2,columnspan=4)
-startdate.grid(row=3,column=1,sticky=W,pady=2,columnspan=4)
-starttime.grid(row=4,column=1,sticky=W,pady=2,columnspan=4)
-duration_d.grid(row=6,column=1,sticky=W,pady=2)
-duration_h.grid(row=6,column=2,sticky=W,pady=2)
-duration_m.grid(row=6,column=3,sticky=W,pady=2)
-duration_s.grid(row=6,column=4,sticky=W,pady=2)
-
-### Buttons
-updateConfigButton.grid(row=27,column=1,sticky=W,pady=2,columnspan=3)
-saveFileButton.grid(row=80,column=1,sticky=W,pady=2)
-
-### Channels info
-channelsLabel.grid(row=14,column=0,sticky=W,pady=2,columnspan=1)
-channel1Label.grid(row=15,column=1,sticky=W,pady=2,columnspan=1)
-channel2Label.grid(row=15,column=2,sticky=W,pady=2,columnspan=1)
-channel3Label.grid(row=15,column=3,sticky=W,pady=2,columnspan=1)
-channel4Label.grid(row=15,column=4,sticky=W,pady=2,columnspan=1)
-
-### Channel drops
-channel1_drop.grid(row=16,column=1,sticky=W,pady=2,columnspan=1)
-channel2_drop.grid(row=16,column=2,sticky=W,pady=2,columnspan=1)
-channel3_drop.grid(row=16,column=3,sticky=W,pady=2,columnspan=1)
-channel4_drop.grid(row=16,column=4,sticky=W,pady=2,columnspan=1)
-
-### Channel comments
-channelComments = Label(root,text="Channel label: ").grid(row=17,column=0,sticky=W,pady=2)
-
-channel1Comment.grid(row=17,column=1,sticky=W,pady=2,columnspan=1)
-channel2Comment.grid(row=17,column=2,sticky=W,pady=2,columnspan=1)
-channel3Comment.grid(row=17,column=3,sticky=W,pady=2,columnspan=1)
-channel4Comment.grid(row=17,column=4,sticky=W,pady=2,columnspan=1)
-
-### Decimation
-myDecimationLabel.grid(row=18,column=0,sticky=W,pady=2,columnspan=1)
-decimation_drop.grid(row=18,column=1,sticky=W,pady=2,columnspan=1)
-
-### user comments space
-usercommentsLabel.grid(row=47,column=0,sticky=W,pady=2,columnspan=5)
-usercommentFrame = Frame(root)
-usercommentFrame.grid(row=48,column=0,sticky=W,pady=2,columnspan=5)
-
-usercommentBox = Text(usercommentFrame,wrap=WORD,height=5)
-usercommentBox.grid(row=49,column=0)
-usercommentBox.config(state=NORMAL)
-
-### configuration logging space
-consoleFrame = Frame(root)
-consoleFrame.grid(row=50,column=0,sticky=W,pady=2,columnspan=5)
-
-consoleBox = scrolledtext.ScrolledText(consoleFrame,wrap=WORD)
-consoleBox.grid(row=51,column=0)
-consoleBox.config(state=DISABLED)
-
-root.mainloop()
-
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+    savewindow = SaveApp()
+    savewindow.show()
+    sys.exit(app.exec_())
