@@ -1,388 +1,367 @@
-from PyQt5.QtWidgets import (QWidget, QLabel, QLineEdit,
-    QTextEdit, QPushButton, QCheckBox, QComboBox,
-    QApplication, QHBoxLayout, QVBoxLayout,
-    QFileDialog, QMessageBox)
-from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot, QTimer
-from PyQt5 import QtGui
-import pyqtgraph as pg
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Mon Feb 21 13:15:16 2022
 
-import sys
-from datetime import datetime
-from traceback import format_exc
-from collections import deque
+@author: todd
+"""
 
-from scipy import signal
-from scipy.io import savemat
+from tkinter import *
+from tkinter.ttk import *
+from tkinter import scrolledtext
+from tkinter.messagebox import askyesno
 import numpy as np
+from tkcalendar import DateEntry
+from datetime import datetime
+from datetime import timedelta
+import alpsdoocslib
+import os
+import os.path
+from example_data import *
+from pathlib import Path
+import matplotlib.pyplot as plt
+from gwpy.timeseries import TimeSeries
+from gwpy.frequencyseries import FrequencySeries
+
+root = Tk()
+root.title('ALPS DOOCS Autoplotter')
+#root.geometry("400x600")
+
+class saveConfig(object):
+    pass
+myConfig = saveConfig()
+
+class plotConfig():
+    pass
+pltConfig = plotConfig()
+
+class DateError(Exception):
+    """The measurement end time has not yet been reached. Measurement end must be in the past."""
+    pass
+#
+
+
+def UpdateConfig():
+    try:
+        global myConfig
+        myConfig.channels=[channel1select.get()]
+        myConfig.channellabels=[channel1Comment.get()] 
+        myConfig.time=[int(duration_d.get()),int(duration_h.get()),int(duration_m.get()),int(duration_s.get())]
+        myConfig.mytimedelta = timedelta(days=myConfig.time[0],hours=myConfig.time[1],minutes=myConfig.time[2],seconds=myConfig.time[3])
+        myConfig.start_datetime = datetime.strptime(startdate.get()+starttime.get(), "%Y-%m-%d%H:%M:%S")
+        myConfig.stop_datetime = myConfig.start_datetime + myConfig.mytimedelta
+        myConfig.input_start = myConfig.start_datetime.strftime('%Y-%m-%dT%H:%M:%S')
+        myConfig.input_stop = myConfig.stop_datetime.strftime('%Y-%m-%dT%H:%M:%S')
+        
+        if not dateisPast(myConfig.stop_datetime):
+            raise DateError
+        
+        numChannels = 1
+#        if myConfig.channels[0] != "None":
+#            numChannels += 1
+#        if myConfig.channels[1] != "None":
+#            numChannels += 1
+#        if myConfig.channels[2] != "None":
+#            numChannels += 1
+#        if myConfig.channels[3] != "None":
+#            numChannels += 1
+            
+        myConfig.decimation=decimation.get()
+        myConfig.decimationFactor = 16000 / decimationVal[decimation.get()]
+        
+        myConfig.filesize = decimationVal[decimation.get()]*8*myConfig.mytimedelta.total_seconds()*numChannels/1e6 ## in MB
+        myConfig.configSummary = (
+                                    f"\n###########################################################"
+                                    f"\nPlot data preview."
+                                    f"\n   Data start time: {myConfig.start_datetime}"
+                                    f"\n   Data stop time: {myConfig.stop_datetime}"
+                                    f"\n   Data Duration: {myConfig.mytimedelta}"
+                                    f"\n   Sampling rate: {myConfig.decimation}"
+                                    f"\n   Plotting on y-axis 1: {myConfig.channels[0]} ..... channel label: {myConfig.channellabels[0]}\n"
+                                  )
+        consoleBox.config(state=NORMAL)
+        consoleBox.insert('insert',myConfig.configSummary)
+        consoleBox.tag_config('warning',foreground="red")
+        if myConfig.filesize > 1e9:
+            consoleBox.insert('insert',f"\n   CAUTION!! Estimated data size to plot: {myConfig.filesize} MB",'warning')
+        consoleBox.see(END)
+        consoleBox.config(state=DISABLED)
+    except DateError:
+        consoleBox.tag_config('warning',foreground="red")
+        consoleBox.config(state=NORMAL)
+        consoleBox.insert(END,("\n\nError occured: The measurement end time has not yet been reached. Measurement end must be in the past"),'warning')
+        consoleBox.config(state=DISABLED)
+        consoleBox.see(END)
+    except Exception as e:
+        consoleBox.tag_config('warning',foreground="red")
+        consoleBox.config(state=NORMAL)
+        consoleBox.insert(END,("\n\nError occured: {0} \nPlease check the format of your entries! \n".format(e)),'warning')
+        consoleBox.config(state=DISABLED)
+        consoleBox.see(END)
+
+        
+    myConfig.daqchannels=[value for value in myConfig.channels if value != 'None']
+
+def makePlot():
+    fs = 16000
+    ch1data = getdata_sample4[0]['data'][0]
+    ch1TimeSeries = TimeSeries(data=ch1data,dt=1/fs)
+    print(f'{filtfreqEntry.get()} Hz')
+    if filtertype1.get() == "lowpass":
+        print("hello")
+        ch1TimeSeries = ch1TimeSeries.lowpass(float(filtfreqEntry.get()))
+    ch1psd = ch1TimeSeries.psd()
+    newWindow=Toplevel(root)
+    newWindow.title("Plot window")
+    newWindow.geometry("600x600")
+    Label(newWindow,text="This is a new window").pack()
+
+
+    t = np.arange(0, len(ch1TimeSeries)/fs, 1/fs)
+    fig = plt.figure(figsize=(5, 4), dpi=100)
+#    fig.add_subplot(111).plot(t, ch1TimeSeries)
+    fig.add_subplot(111)
+    plt.plot(ch1psd)
+    plt.xscale('log')
+    
+    
+    canvas = FigureCanvasTkAgg(fig, master=newWindow)  # A tk.DrawingArea.
+    canvas.draw()
+    canvas.get_tk_widget().pack(side=TOP, fill=BOTH, expand=1)
+    
+    toolbar = NavigationToolbar2Tk(canvas, newWindow)
+    toolbar.update()
+    canvas.get_tk_widget().pack(side=TOP, fill=BOTH, expand=1)
+########################################################################
+########################################################################
+########################################################################
+
+### entry field labels
+scaleLabel = Label(root,text="polynomial scale factor (a*x + b):")
+plotTypeLabel = Label(root,text="Plot type:")
+channelsLabel = Label(root,text="channel 1 y-axis")
+channel1Label = Label(root,text="Channel select:")
+channel2Label = Label(root,text="Channel 2:")
+channel3Label = Label(root,text="Channel 3:")
+channel4Label = Label(root,text="Channel 4:")
+startdateLabel = Label(root,text="Data start date: ")
+starttimeLabel = Label(root,text="Data start time: ")
+durationLabel = Label(root,text="Duration: ")
+daysLabel = Label(root,text="Days:")
+hoursLabel = Label(root,text="Hours:")
+minutesLabel = Label(root,text="Minutes:")
+secondsLabel = Label(root,text="Seconds:")
+usercommentsLabel = Label(root,text="Enter additional user comments about this measurement/data. \nThese additional comments will be saved as a .txt file in the destination directory.")
+channel1commentLabel = Label(root,text="channel 1 legend:")
+channel2commentLabel = Label(root,text="y-axis 2 label")
+channel3commentLabel = Label(root,text="y-axis 3 label")
+channel4commentLabel = Label(root,text="y-axis 4 label")
+
+### Channel selection dropdown menus
+### Channel selection dropdown menus
+channel_options = [
+        'None',
+        'NR/CH_1.00',
+        'NR/CH_1.01',
+        'NR/CH_1.02',
+        'NR/CH_1.03',
+        'NR/CH_1.04',
+        'NR/CH_1.05',
+        'NR/CH_1.06',
+        'NR/CH_1.07',
+        'NL/CH_1.00',
+        'NL/CH_1.01',
+        'HN/CH_1.00',
+        ]
+channel1select = StringVar()
+channel2select = StringVar()
+channel3select = StringVar()
+channel4select = StringVar()
+channel1_drop = OptionMenu(root, channel1select, channel_options[0], *channel_options)
+channel2_drop = OptionMenu(root, channel2select, channel_options[0], *channel_options)
+channel3_drop = OptionMenu(root, channel3select, channel_options[0], *channel_options)
+channel4_drop = OptionMenu(root, channel4select, channel_options[0], *channel_options)
+channel1_drop.config(width=10)
+channel2_drop.config(width=10)
+channel3_drop.config(width=10)
+channel4_drop.config(width=10)
+
+### channel user comments
+channel1Comment = Entry(root,width=15)
+channel1Comment.insert(0,"")
+channel2Comment = Entry(root,width=10)
+channel2Comment.insert(0,"")
+channel3Comment = Entry(root,width=10)
+channel3Comment.insert(0,"")
+channel4Comment = Entry(root,width=10)
+channel4Comment.insert(0,"")
+
+### start date entry field
+startdate = Entry(root,width=10)
+startdate.insert(0,datetime.today().strftime('%Y-%m-%d'))
+### 
+
+### start time entry field
+starttime = Entry(root,width=10)
+starttime.insert(0,datetime.today().strftime('%H:%M:%S'))
+### 
+
+### duration days entry field
+duration_d = Entry(root,width=5)
+duration_d.insert(0,0)
+
+### duration hours entry field
+duration_h = Entry(root,width=5)
+duration_h.insert(0,0)
+
+### duration minutes entry field
+duration_m = Entry(root,width=5)
+duration_m.insert(0,0)
+
+### duration seconds entry field
+duration_s = Entry(root,width=5)
+duration_s.insert(0,10)
+
+mytimedelta=timedelta(days=int(duration_d.get()),hours=int(duration_h.get()),minutes=int(duration_m.get()),seconds=int(duration_s.get()))
+mystarttime=datetime.strptime(startdate.get()+starttime.get(), "%Y-%m-%d%H:%M:%S")
+
+myStartDateLabel = Label(root,text=mystarttime)
+myTimeDeltaLabel = Label(root,text=mytimedelta)
+myEndDateLabel = Label(root,text=mystarttime+mytimedelta)
+
+scaleA = Entry(root,width=5)
+scaleA.insert(0,1)
+scaleB = Entry(root,width=5)
+scaleB.insert(0,0)
+
+myDecimationLabel = Label(root,text="Downsample to:")
+myPlotTypeLabel = Label(root,text="Select type of plot to generate:")
+
+####
+decimation = StringVar()
+decimationVal = {
+        "16kHz": 16000,
+        "8kHz": 8000,
+        "4kHz": 4000,
+        "2kHz": 2000,
+        "1kHz": 1000,
+        "500Hz": 500,
+        "100Hz": 100,
+        "64Hz": 64,
+        "32Hz": 32
+        }
+decimation_drop = OptionMenu(root, decimation, list(decimationVal.keys())[0], *list(decimationVal.keys()))
+###
+
+plottype = StringVar()
+plot_options = {
+        "Amplitude Spectral Density (ASD)":"asd",
+        "Power Spectral Density (PSD)":"psd",
+        "Time Series":"ts"
+        }
+plottype_drop = OptionMenu(root, plottype, list(plot_options.keys())[2], *list(plot_options.keys()))
+
+def OptionMenu_SelectionEvent(event): # I'm not sure on the arguments here, it works though
+    if filtertype1.get() == "lowpass":
+        filtfreqLabel = Label(root,text="Lowpass corner frequency (Hz):")
+        filtfreqEntry = Entry(root,width=10)
+        filtfreqLabel.grid(row=19,column=3,sticky=EW,pady=2,columnspan=2)
+        filtfreqEntry.grid(row=20,column=3,sticky=EW,pady=2,columnspan=2)
+    if filtertype1.get() == "highpass":
+        filtfreqLabel = Label(root,text="Highpass corner frequency (Hz):")
+        filtfreqEntry = Entry(root,width=10)
+        filtfreqLabel.grid(row=19,column=3,sticky=EW,pady=2,columnspan=2)
+        filtfreqEntry.grid(row=20,column=3,sticky=EW,pady=2,columnspan=2)
+    if filtertype1.get() == "bandpass":
+        filtfreqLabel = Label(root,text="Bandpass low and high frequencies (Hz):")
+        filtfreqEntry = Entry(root,width=10)
+        filtfreqLabel.grid(row=19,column=3,sticky=EW,pady=2,columnspan=2)
+        filtfreqEntry.grid(row=20,column=3,sticky=EW,pady=2,columnspan=2)
+    if filtertype1.get() == "None":
+        filtfreqLabel = Label(root,text="Corner frequency:")
+        filtfreqEntry = Entry(root,width=10)
+        filtfreqLabel.grid_remove()
+        filtfreqEntry.grid_remove()
+        print("None")
+    pass
+
+filtfreqLabel = Label(root,text="Corner frequency:")
+filtfreqEntry = Entry(root,width=10)
+
+filterLabel = Label(root,text="Select optional signal filter:")
+filtertype1,filtertype2,filtertype3,filtertype4=StringVar(),StringVar(),StringVar(),StringVar()
+filter_options = [
+        "None",
+        "lowpass",
+        "highpass",
+        "notch",
+        "bandpass",
+        "custom filter (zpk)"
+        ]
+filtertype1_drop = OptionMenu(root, filtertype1, filter_options[0], *filter_options, command = OptionMenu_SelectionEvent)
+filtertype2_drop = OptionMenu(root, filtertype2, filter_options[0], *filter_options)
+filtertype3_drop = OptionMenu(root, filtertype3, filter_options[0], *filter_options)
+filtertype4_drop = OptionMenu(root, filtertype4, filter_options[0], *filter_options)
+
+
+
+############ GUI LAYOUT ################
+plotTypeLabel.grid(row=0,column=0,sticky=W,pady=2)
+plottype_drop.grid(row=0,column=1,columnspan=3,sticky=EW,pady=2)
+
+### Labels
+startdateLabel.grid(row=3,column=0,sticky=W,pady=2)
+starttimeLabel.grid(row=4,column=0,sticky=W,pady=2)
+durationLabel.grid(row=5,column=0,sticky=W,pady=2)
+daysLabel.grid(row=5,column=1,sticky=W,pady=2)
+hoursLabel.grid(row=5,column=2,sticky=W,pady=2)
+minutesLabel.grid(row=5,column=3,sticky=W,pady=2)
+secondsLabel.grid(row=5,column=4,sticky=W,pady=2)
+
+### Entry fields
+startdate.grid(row=3,column=1,sticky=EW,pady=2,columnspan=2)
+starttime.grid(row=4,column=1,sticky=EW,pady=2,columnspan=2)
+duration_d.grid(row=6,column=1,sticky=EW,pady=2)
+duration_h.grid(row=6,column=2,sticky=EW,pady=2)
+duration_m.grid(row=6,column=3,sticky=EW,pady=2)
+duration_s.grid(row=6,column=4,sticky=EW,pady=2)
+
+### y1 configuration
+channelsLabel.grid(row=14,column=0,sticky=W,pady=5,columnspan=1)
+channel1Label.grid(row=15,column=1,sticky=W,pady=2,columnspan=2)
+channel1_drop.grid(row=16,column=1,sticky=EW,pady=2,columnspan=2)
+channel1commentLabel.grid(row=15,column=4,sticky=EW, padx=5)
+channel1Comment.grid(row=16,column=4,sticky=W,pady=2, padx=5,columnspan=1)
+myDecimationLabel.grid(row=15,column=3,sticky=EW,pady=2,columnspan=1)
+decimation_drop.grid(row=16,column=3,sticky=EW,pady=2,columnspan=1)
+filterLabel.grid(row=19,column=1,sticky=EW,pady=2,columnspan=2)
+filtertype1_drop.grid(row=20,column=1,sticky=EW,pady=2,columnspan=2)
+
+
+scaleLabel.grid(row=30,column=1,sticky=EW,columnspan=3)
+scaleA.grid(row=30,column=3)
+scaleB.grid(row=30,column=4)
+
+
+Separator(root,orient=HORIZONTAL).grid(row=2,columnspan=10,sticky="ew",pady=5)
+Separator(root,orient=HORIZONTAL).grid(row=8,columnspan=10,sticky="ew",pady=5)
+Separator(root,orient=HORIZONTAL).grid(row=18,column=1,columnspan=10,sticky="ew",pady=5)
+Separator(root,orient=HORIZONTAL).grid(row=8,columnspan=10,sticky="ew")
+
+
+### configuration logging space
+consoleFrame = Frame(root,height=30)
+consoleFrame.grid(row=50,column=0,sticky=W,pady=2,columnspan=10)
+
+consoleBox = scrolledtext.ScrolledText(consoleFrame,wrap=WORD)
+consoleBox.grid(row=51,column=0)
+consoleBox.config(state=DISABLED)
+
+### Buttons
+updateConfigButton = Button(root, text="Update Plot Configuration", command=UpdateConfig)
+makePlotButton = Button(root,text="Generate Plot",command=makePlot)
+makePlotButton.grid(row=100,column=1)
+updateConfigButton.grid(row=52,column=1,sticky=W,pady=2,columnspan=4)
+
+root.mainloop()
 
-import pydoocs
-
-from alpsdoocslib import BASE_ADDRESS, NR_ADDRESSES, NL_ADDRESSES, HN_ADDRESSES
-
-UNITS_TIP = """\
-(Optional)
-Sets units to display on plot's y-axis label.
-If blank, none will display.\
-"""
-
-FREQ_RES_TIP = """\
-Must be no greater than 32 Hz.
-
-Upon each request for data, DOOCS sends 500 samples
-corresponding to the latest 'macropulse' event. Thus,
-the total measurement time for a spectrum must be an
-integer multiple of 500 samples, or 0.03125 seconds.
-Equivalently, the requested frequency resolution will
-be discretized to (32/N) Hz, for some integer N >= 1.\
-"""
-
-AVERAGING_TIP = """\
-The measurement time set by the frequency resolution
-above will be multiplied by the averaging. The length
-of a segment of data for a single spectrum is the
-total length divided by the averaging. No overlap
-between segments is used.\
-"""
-
-UPDATE_TIME_TIP = """\
-Time between the display of the next spectrum plot.
-Requesting update times significantly below 1 second
-is not guaranteed to be fulfilled.\
-"""
-
-SAVE_DATA_TIP = """\
-Saves the currently displayed plot into a MATLAB file
-as two arrays titled 'frequencies' and 'spectrum'.
-"""
-
-pg.setConfigOption('background', 'w') # Standard (white)
-
-class CalcSpecWorker(QObject):
-    finished = pyqtSignal()
-    plotsignal = pyqtSignal(tuple)
-    report = pyqtSignal(str)
-
-    def __init__(self, parent, cycles, calibration, averaging, window, scaling, buffer):
-        super().__init__()
-        self.parent = parent
-        self.cycles = cycles
-        self.calibration = calibration
-        self.averaging = averaging
-        self.window = window
-        self.scaling = scaling
-        self.buffer = buffer
-
-    def calc(self):
-        if not self.parent.interrupt:
-            if self.cycles == len(self.buffer):
-                data = np.ravel(self.buffer)
-                calibrated_data = data * self.calibration
-                out = signal.welch(calibrated_data, 16000, window=self.window, scaling=self.scaling,
-                                   nperseg=len(calibrated_data)/self.averaging, noverlap=0)
-                self.plotsignal.emit(out)
-        else:
-            self.finished.emit()
-
-    def run(self):
-        self.parent.timer.timeout.connect(self.calc)
-
-class GetDataWorker(QObject):
-    finished = pyqtSignal()
-    report = pyqtSignal(str)
-
-    def __init__(self, parent, channel, buffer, cycles):
-        super().__init__()
-        self.parent = parent
-        self.channel = channel
-        self.buffer = buffer
-        self.cycles = cycles
-
-    def run(self):
-        try:
-            pulse = 0
-            while not self.parent.interrupt:
-                output = pydoocs.read(self.channel)
-                if output['macropulse'] == pulse:
-                    continue
-                else:
-                    pulse = output['macropulse']
-                    self.buffer.append( output['data'][:,1] )
-        except:
-            self.report.emit(format_exc())
-
-        self.finished.emit()
-
-class SpectrumPlot(QWidget):
-    channelOptions = {'NR': NR_ADDRESSES, 'NL': NL_ADDRESSES, 'HN': HN_ADDRESSES}
-
-    baseAdr = BASE_ADDRESS
-
-    windowOptions = [
-        'barthann',
-        'bartlett',
-        'blackmanharris',
-        'bohman',
-        'boxcar',
-        'cosine',
-        'exponential',
-        'flattop',
-        'hamming',
-        'hann',
-        'nuttall',
-        'parzen',
-        'taylor',
-        'triang',
-        'tukey']
-
-    def __init__(self, parent=None):
-        super().__init__()
-
-        self.parent = parent
-        self.interrupt = False
-        self.buffer = None
-        self.timer = QTimer()
-        self.timer.setInterval(1000)
-
-        self.initUI()
-
-    def initUI(self):
-        font = QtGui.QFont()
-        font.setPixelSize(25)
-
-        self.plotWidget = pg.PlotWidget()
-        self.plotCurve = self.plotWidget.plot()
-        self.plotCurve.setPen(color=(0,33,165))    # UF blue
-        self.plotWidget.setLabel('bottom', 'Frequency', units='Hz', size='40pt')
-        self.plotWidget.setLabel('left', 'Power', size ="40pt")
-        self.plotWidget.setLogMode(True, True)
-        self.plotWidget.showGrid(True, True, alpha=1.0)
-        self.plotWidget.getAxis("bottom").tickFont = font
-        self.plotWidget.getAxis("left").tickFont = font
-        self.plotWidget.enableAutoRange()
-
-        self.labelLocation = QLabel('Location:')
-        self.labelChannels = QLabel('Channels:')
-        self.labelCalibration = QLabel('Calibration Factor:')
-        self.labelUnits = QLabel('Calibration Units:')
-        self.labelFreqRes = QLabel('Frequency Resolution (Hz):')
-        self.labelAveraging = QLabel('Averaging:')
-        self.labelWindow = QLabel('Window:')
-        self.labelScaling = QLabel('Scaling:')
-        self.labelUpdate = QLabel('Plot Update Time (s)')
-
-        self.comboBoxLocation = QComboBox(self)
-        self.comboBoxLocation.addItems(['NR', 'NL', 'HN'])
-        self.comboBoxLocation.currentTextChanged.connect(self.locationChanged)
-
-        self.comboBoxChannelMenu = QComboBox(self)
-        self.comboBoxChannelMenu.addItems(self.channelOptions['NR'])
-
-        self.lineEditCalibration = QLineEdit(self)
-        self.lineEditCalibration.setText('8.1e-4')
-
-        self.lineEditUnits = QLineEdit(self)
-        self.lineEditUnits.setPlaceholderText('units')
-        self.lineEditUnits.setToolTip(UNITS_TIP)
-
-        self.lineEditFreqRes = QLineEdit(self)
-        self.lineEditFreqRes.setText('1')
-        self.lineEditFreqRes.setToolTip(FREQ_RES_TIP)
-
-        self.lineEditAveraging = QLineEdit(self)
-        self.lineEditAveraging.setText('1')
-        self.lineEditAveraging.setToolTip(AVERAGING_TIP)
-
-        self.comboBoxWindow = QComboBox(self)
-        self.comboBoxWindow.addItems(self.windowOptions)
-        self.comboBoxWindow.setCurrentText('hann')
-
-        self.comboBoxScaling = QComboBox(self)
-        self.comboBoxScaling.addItems(['spectrum', 'density'])
-
-        self.lineEditUpdate = QLineEdit(self)
-        self.lineEditUpdate.setText('1')
-        self.lineEditUpdate.setToolTip(UPDATE_TIME_TIP)
-        self.lineEditUpdate.editingFinished.connect(self.updatePlotTime)
-
-        self.buttonStart = QPushButton('Start Plot', self)
-        self.buttonStart.clicked.connect(self.startClick)
-        self.buttonStop = QPushButton('Stop Plot', self)
-        self.buttonStop.clicked.connect(self.stopClick)
-        self.buttonStop.setEnabled(False)
-
-        self.buttonSaveData = QPushButton('Save Current Spectrum', self)
-        self.buttonSaveData.clicked.connect(self.saveData)
-
-        self.textEditConsole = QTextEdit(self)
-        self.textEditConsole.setReadOnly(True)
-
-        hboxMain = QHBoxLayout()
-        vboxLeftPane = QVBoxLayout()
-        hboxSettings = QHBoxLayout()
-
-        vboxLabels = QVBoxLayout()
-        vboxFields = QVBoxLayout()
-
-        vboxLabels.addWidget(self.labelLocation)
-        vboxLabels.addWidget(self.labelChannels)
-        vboxLabels.addWidget(self.labelCalibration)
-        vboxLabels.addWidget(self.labelUnits)
-        vboxLabels.addWidget(self.labelFreqRes)
-        vboxLabels.addWidget(self.labelAveraging)
-        vboxLabels.addWidget(self.labelWindow)
-        vboxLabels.addWidget(self.labelScaling)
-        vboxLabels.addWidget(self.labelUpdate)
-
-        vboxFields.addWidget(self.comboBoxLocation)
-        vboxFields.addWidget(self.comboBoxChannelMenu)
-        vboxFields.addWidget(self.lineEditCalibration)
-        vboxFields.addWidget(self.lineEditUnits)
-        vboxFields.addWidget(self.lineEditFreqRes)
-        vboxFields.addWidget(self.lineEditAveraging)
-        vboxFields.addWidget(self.comboBoxWindow)
-        vboxFields.addWidget(self.comboBoxScaling)
-        vboxFields.addWidget(self.lineEditUpdate)
-
-        hboxSettings.addLayout(vboxLabels)
-        hboxSettings.addLayout(vboxFields)
-        vboxLeftPane.addLayout(hboxSettings)
-        vboxLeftPane.addSpacing(20)
-
-        hboxButtons = QHBoxLayout()
-        hboxButtons.addStretch()
-        hboxButtons.addWidget(self.buttonStart)
-        hboxButtons.addWidget(self.buttonStop)
-        hboxButtons.addStretch()
-
-        vboxLeftPane.addLayout(hboxButtons)
-        vboxLeftPane.addSpacing(15)
-
-        hboxSave = QHBoxLayout()
-        hboxSave.addStretch()
-        hboxSave.addWidget(self.buttonSaveData)
-        hboxSave.addStretch()
-        vboxLeftPane.addLayout(hboxSave)
-
-        vboxLeftPane.addStretch()
-        vboxLeftPane.addWidget(self.textEditConsole)
-
-        hboxMain.addLayout(vboxLeftPane)
-        hboxMain.addWidget(self.plotWidget, 5)
-
-        self.setLayout(hboxMain)
-        self.setWindowTitle('Spectrum Plot')
-        self.setGeometry(100, 100, 1280, 720)
-
-    def setEnableSettings(self, enabled):
-        self.buttonStop.setEnabled(not enabled)
-        self.buttonStart.setEnabled(enabled)
-        self.comboBoxLocation.setEnabled(enabled)
-        self.comboBoxChannelMenu.setEnabled(enabled)
-        self.lineEditCalibration.setEnabled(enabled)
-        self.lineEditUnits.setEnabled(enabled)
-        self.lineEditFreqRes.setEnabled(enabled)
-        self.lineEditAveraging.setEnabled(enabled)
-        self.comboBoxWindow.setEnabled(enabled)
-        self.comboBoxScaling.setEnabled(enabled)
-
-    def locationChanged(self):
-        newloc = self.comboBoxLocation.currentText()
-        self.comboBoxChannelMenu.clear()
-        self.comboBoxChannelMenu.addItems(self.channelOptions[newloc])
-
-    def print(self, *text):
-        for t in text:
-            self.textEditConsole.insertPlainText(str(t)+' ')
-        self.textEditConsole.insertPlainText('\n')
-
-    def updatePlotTime(self):
-        updateTime = int(float(self.lineEditUpdate.text())* 1e3)
-        self.timer.setInterval(updateTime)
-
-    @pyqtSlot(str)
-    def workerReport(self, report):
-        self.print(report)
-
-    def stopClick(self):
-        self.interrupt = True
-
-    def startClick(self):
-        self.interrupt = False
-        self.setEnableSettings(False)
-
-        units = self.lineEditUnits.text()
-        if not units == '':
-            self.plotWidget.setLabel('left', 'Power', units=units, size='40pt')
-
-        channel = self.baseAdr + self.comboBoxChannelMenu.currentText() + '/CH00.TD'
-        averaging = int(self.lineEditAveraging.text())
-        timebase = 1/float(self.lineEditFreqRes.text())
-
-        calibration = float(self.lineEditCalibration.text())
-        window = self.comboBoxWindow.currentText()
-        scaling = self.comboBoxScaling.currentText()
-
-        cycles = int(timebase * averaging * 32)
-
-        self.buffer = deque(maxlen=cycles)
-
-        self.getDataWorker = GetDataWorker(self, channel, self.buffer, cycles)
-        self.getDataThread = QThread()
-        self.getDataWorker.moveToThread(self.getDataThread)
-        self.getDataThread.started.connect(self.getDataWorker.run)
-        self.getDataWorker.finished.connect(self.getDataThread.quit)
-        self.getDataWorker.finished.connect(self.getDataWorker.deleteLater)
-        self.getDataThread.finished.connect(self.getDataThread.deleteLater)
-        self.getDataWorker.report.connect(self.workerReport)
-
-        self.calcSpecWorker = CalcSpecWorker(self, cycles, calibration, averaging, window, scaling, self.buffer)
-        self.calcSpecThread = QThread()
-        self.calcSpecWorker.moveToThread(self.calcSpecThread)
-        self.calcSpecThread.started.connect(self.calcSpecWorker.run)
-        self.calcSpecWorker.finished.connect(self.calcSpecThread.quit)
-        self.calcSpecWorker.finished.connect(self.calcSpecWorker.deleteLater)
-        self.calcSpecThread.finished.connect(self.calcSpecThread.deleteLater)
-        self.calcSpecWorker.report.connect(self.workerReport)
-        self.calcSpecWorker.plotsignal.connect(self.updatePlot)
-
-        self.getDataThread.finished.connect(lambda : self.setEnableSettings(True))
-        self.calcSpecThread.finished.connect(lambda : self.timer.stop)
-
-        self.setEnableSettings(False)
-        self.calcSpecThread.start()
-        self.getDataThread.start()
-        self.timer.start()
-
-    @pyqtSlot(tuple)
-    def updatePlot(self, plotData):
-        freqs, ps = plotData
-        self.plotCurve.setData(freqs, ps)
-        pg.Qt.QtGui.QApplication.processEvents()
-
-    def saveData(self):
-        now = datetime.now()
-        freqs, ps = self.plotCurve.getData()
-        if freqs == None:
-            self.print('No data plotted yet to save.')
-            return
-
-        dialog = QFileDialog()
-        dialog.setFileMode(QFileDialog.Directory)
-        if dialog.exec_():
-            filepath = dialog.selectedFiles()[0]
-
-        chan_name = self.comboBoxChannelMenu.currentText()
-        chan_name = chan_name.replace('/', '_')
-        chan_name = chan_name.replace('.', '_')
-
-        filepath = filepath +  + '/SpectrumData_' + chan_name + datetime.strftime(now, '%Y_%m_%dT%H_%M_%S')
-
-        savemat(filepath, {'frequencies':freqs, 'spectrum':ps}, appendmat=True)
-        self.print("Saved file: ", filepath)
-
-
-if __name__ == '__main__':
-    app = QApplication(sys.argv)
-    plotwindow = SpectrumPlot()
-    plotwindow.show()
-    sys.exit(app.exec_())
