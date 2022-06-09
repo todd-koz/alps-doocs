@@ -17,6 +17,8 @@ import numpy as np
 
 import pydoocs
 
+from alpsdoocslib import BASE_ADDRESS, NR_ADDRESSES, NL_ADDRESSES, HN_ADDRESSES
+
 UNITS_TIP = """\
 (Optional)
 Sets units to display on plot's y-axis label.
@@ -111,20 +113,9 @@ class GetDataWorker(QObject):
         self.finished.emit()
 
 class SpectrumPlot(QWidget):
-    channelOptions = [
-        'NR/CH_1.00',
-        'NR/CH_1.01',
-        'NR/CH_1.02',
-        'NR/CH_1.03',
-        'NR/CH_1.04',
-        'NR/CH_1.05',
-        'NR/CH_1.06',
-        'NR/CH_1.07',
-        'NL/CH_1.00',
-        'NL/CH_1.01',
-        'HN/CH_1.00' ]
+    channelOptions = {'NR': NR_ADDRESSES, 'NL': NL_ADDRESSES, 'HN': HN_ADDRESSES}
 
-    baseAdr = 'ALPS.DIAG/ALPS.ADC.'
+    baseAdr = BASE_ADDRESS
 
     windowOptions = [
         'barthann',
@@ -169,6 +160,7 @@ class SpectrumPlot(QWidget):
         self.plotWidget.getAxis("left").tickFont = font
         self.plotWidget.enableAutoRange()
 
+        self.labelLocation = QLabel('Location:')
         self.labelChannels = QLabel('Channels:')
         self.labelCalibration = QLabel('Calibration Factor:')
         self.labelUnits = QLabel('Calibration Units:')
@@ -178,8 +170,12 @@ class SpectrumPlot(QWidget):
         self.labelScaling = QLabel('Scaling:')
         self.labelUpdate = QLabel('Plot Update Time (s)')
 
+        self.comboBoxLocation = QComboBox(self)
+        self.comboBoxLocation.addItems(['NR', 'NL', 'HN'])
+        self.comboBoxLocation.currentTextChanged.connect(self.locationChanged)
+
         self.comboBoxChannelMenu = QComboBox(self)
-        self.comboBoxChannelMenu.addItems(self.channelOptions)
+        self.comboBoxChannelMenu.addItems(self.channelOptions['NR'])
 
         self.lineEditCalibration = QLineEdit(self)
         self.lineEditCalibration.setText('8.1e-4')
@@ -214,8 +210,6 @@ class SpectrumPlot(QWidget):
         self.buttonStop.clicked.connect(self.stopClick)
         self.buttonStop.setEnabled(False)
 
-        self.labelFilepath = QLabel('Filepath:')
-        self.lineEditFilepath = QLineEdit(self)
         self.buttonSaveData = QPushButton('Save Current Spectrum', self)
         self.buttonSaveData.clicked.connect(self.saveData)
 
@@ -229,6 +223,7 @@ class SpectrumPlot(QWidget):
         vboxLabels = QVBoxLayout()
         vboxFields = QVBoxLayout()
 
+        vboxLabels.addWidget(self.labelLocation)
         vboxLabels.addWidget(self.labelChannels)
         vboxLabels.addWidget(self.labelCalibration)
         vboxLabels.addWidget(self.labelUnits)
@@ -238,6 +233,7 @@ class SpectrumPlot(QWidget):
         vboxLabels.addWidget(self.labelScaling)
         vboxLabels.addWidget(self.labelUpdate)
 
+        vboxFields.addWidget(self.comboBoxLocation)
         vboxFields.addWidget(self.comboBoxChannelMenu)
         vboxFields.addWidget(self.lineEditCalibration)
         vboxFields.addWidget(self.lineEditUnits)
@@ -261,7 +257,7 @@ class SpectrumPlot(QWidget):
         vboxLeftPane.addLayout(hboxButtons)
         vboxLeftPane.addSpacing(15)
 
-        hboxSave = QVBoxLayout()
+        hboxSave = QHBoxLayout()
         hboxSave.addStretch()
         hboxSave.addWidget(self.buttonSaveData)
         hboxSave.addStretch()
@@ -280,6 +276,7 @@ class SpectrumPlot(QWidget):
     def setEnableSettings(self, enabled):
         self.buttonStop.setEnabled(not enabled)
         self.buttonStart.setEnabled(enabled)
+        self.comboBoxLocation.setEnabled(enabled)
         self.comboBoxChannelMenu.setEnabled(enabled)
         self.lineEditCalibration.setEnabled(enabled)
         self.lineEditUnits.setEnabled(enabled)
@@ -287,6 +284,11 @@ class SpectrumPlot(QWidget):
         self.lineEditAveraging.setEnabled(enabled)
         self.comboBoxWindow.setEnabled(enabled)
         self.comboBoxScaling.setEnabled(enabled)
+
+    def locationChanged(self):
+        newloc = self.comboBoxLocation.currentText()
+        self.comboBoxChannelMenu.clear()
+        self.comboBoxChannelMenu.addItems(self.channelOptions[newloc])
 
     def print(self, *text):
         for t in text:
@@ -367,7 +369,7 @@ class SpectrumPlot(QWidget):
         dialog = QFileDialog()
         dialog.setFileMode(QFileDialog.Directory)
         if dialog.exec_():
-            filepath = dialog.selectedFiles()[0])
+            filepath = dialog.selectedFiles()[0]
 
         chan_name = self.comboBoxChannelMenu.currentText()
         chan_name = chan_name.replace('/', '_')
